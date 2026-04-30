@@ -284,10 +284,9 @@ class AsyncClient:
 
     # --- Dead Letter Queue -------------------------------------------------
     #
-    # DLQ rows live in queue_storage `dlq_entries`, outside the hot claim
-    # path. These methods expose the operator-level admin surface: inspect,
-    # retry, move failed jobs in, and purge. See `awa-model/src/dlq.rs` for
-    # semantics.
+    # DLQ rows live in `dlq_entries`, outside the hot claim path. These
+    # methods expose the operator-level admin surface: inspect, retry,
+    # move failed jobs in, and purge.
 
     async def list_dlq(
         self,
