@@ -241,6 +241,49 @@ def test_insert_many_copy_sync(client):
         assert job.args["to"] == f"copy{i}@example.com"
 
 
+def test_enqueue_many_copy_sync_queue_storage(client):
+    schema = "awa_py_sync_enqueue_many_copy"
+    queue = "sync_enqueue_many_copy"
+    client.install_queue_storage(schema=schema, reset=True)
+
+    count = client.enqueue_many_copy(
+        [SyncEmail(to=f"qs-copy{i}@example.com", subject=f"Copy {i}") for i in range(3)],
+        queue=queue,
+        priority=1,
+        metadata={"source": "python-sync"},
+        tags=["bulk"],
+    )
+    assert count == 3
+
+    tx = client.transaction()
+    row = tx.fetch_one(
+        f"""
+        SELECT
+            count(*)::bigint AS ready_count,
+            min(payload->'metadata'->>'source') AS source,
+            min(payload->'tags'->>0) AS tag
+        FROM {schema}.ready_entries
+        WHERE queue = $1
+        """,
+        queue,
+    )
+    counts = tx.fetch_one(
+        f"""
+        SELECT available_count
+        FROM {schema}.queue_lanes
+        WHERE queue = $1 AND priority = 1
+        """,
+        queue,
+    )
+    tx.execute("DELETE FROM awa.runtime_storage_backends WHERE backend = 'queue_storage'")
+    tx.commit()
+
+    assert row["ready_count"] == 3
+    assert row["source"] == "python-sync"
+    assert row["tag"] == "bulk"
+    assert counts["available_count"] == 3
+
+
 # -- Test 25: JobState.__str__ returns lowercase --
 
 

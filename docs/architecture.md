@@ -297,7 +297,8 @@ works within caller-managed transactions. `insert_many_copy_from_pool` is a
 convenience wrapper that manages its own transaction.
 
 Queue-storage producers can bypass the compatibility view/function with
-`QueueStorage::enqueue_params_copy`:
+`QueueStorage::enqueue_params_copy`; Python exposes the same path as
+`AsyncClient.enqueue_many_copy(...)` / `Client.enqueue_many_copy(...)`:
 
 ```text
 enqueue_params_copy(pool, jobs)

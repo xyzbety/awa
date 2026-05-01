@@ -113,7 +113,9 @@ and dispatchers handle duplicates gracefully.
   compatibility view/function and COPY directly into `ready_entries` and
   `deferred_jobs` while preserving job id, lane, counter, uniqueness, and
   notification invariants.
-- **Python support:** Python bindings expose `insert_many_copy` / `insert_many_copy_sync`.
+- **Python support:** Python bindings expose `insert_many_copy` /
+  `insert_many_copy_sync` for compatibility COPY and `enqueue_many_copy` /
+  `enqueue_many_copy_sync` for direct queue-storage COPY.
 
 ### Negative
 
