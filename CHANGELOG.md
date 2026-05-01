@@ -3,7 +3,7 @@
 Notable changes between releases. Detailed migration notes for storage
 transitions live in [`docs/upgrade-0.5-to-0.6.md`](docs/upgrade-0.5-to-0.6.md).
 
-## [0.6.0-alpha.0] — unreleased
+## [0.6.0-alpha.2] — 2026-05-02
 
 ### Added
 
