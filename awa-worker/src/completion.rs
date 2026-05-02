@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn completion_sort_groups_receipt_slots_before_job_id() {
-        let mut requests = vec![
+        let mut requests = [
             completion_request_with_claim_slot(10, 1, 3),
             completion_request_with_claim_slot(2, 1, 1),
             completion_request_with_claim_slot(1, 1, 3),

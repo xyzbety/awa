@@ -349,10 +349,11 @@ fix (v0.5.0) eliminated the bottleneck entirely.
   flush. Lowered from `512` after multi-replica matrix runs showed `128`
   delivered the lowest p99 across the 1–4 worker-process band; `512` did
   not buy throughput and worsened tail latency.
-- `AWA_COMPLETION_SHARDS` (default `4`): number of parallel completion
-  flushers. Note that the effective fleet-wide flusher count is
-  `processes × AWA_COMPLETION_SHARDS`; tune accordingly for multi-process
-  deployments.
+- `AWA_COMPLETION_SHARDS`: number of parallel completion flushers. The
+  runtime default is storage-dependent: `8` for canonical storage and `4`
+  for queue storage. The effective fleet-wide flusher count is
+  `processes × AWA_COMPLETION_SHARDS`, so tune accordingly for
+  multi-process deployments in either storage mode.
 
 ### Concurrent Multi-Queue Lifecycle
 
