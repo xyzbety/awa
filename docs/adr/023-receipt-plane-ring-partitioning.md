@@ -107,6 +107,19 @@ Apply ADR-019's rotation-and-prune pattern to the receipt plane. Remove
 - Short-job fast path becomes strictly cheaper: one insert at claim
   (previously two) and one insert at completion (previously one insert
   and one delete).
+- Completion batches are ordered by `claim_slot` before `(job_id,
+  run_lease)` so a flusher presents partition-local closure rows to
+  Postgres. That ordering does not change the stale-writer guard; it
+  only improves locality for the append-only receipt plane.
+- Default successful completions avoid writing a terminal payload copy
+  when the runtime payload is empty or unchanged from `ready_entries`.
+  When an entire done batch has empty terminal payloads, completion also
+  skips the ready-payload lookup that would otherwise be needed to prove
+  unchanged non-empty payloads can be elided.
+- The receipt-backed completion SQL pipelines closure insert and
+  `attempt_state` cleanup in one data-modifying CTE. The terminal row
+  append remains a separate statement because it carries the public
+  terminal-history contract and unique-claim synchronization.
 
 ### Open-claim queries
 
@@ -219,6 +232,11 @@ harness used for the ADR-019 baseline:
 - Rescue gains a partition-aware variant and must run before prune takes
   `ACCESS EXCLUSIVE`. The interaction point is small but adds a
   prune-path precondition not present for `ready` / `done`.
+- The default-success path still appends a `done_entries` row. Replacing
+  that with an even narrower success receipt would require a schema and
+  admin-contract change, because queue counts, retention, `load_job`, and
+  terminal inspection currently use `done_entries` as the materialized
+  terminal record.
 
 ## Alternatives Considered
 

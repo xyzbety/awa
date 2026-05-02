@@ -4375,7 +4375,14 @@ impl QueueStorage {
         }
 
         let schema = self.schema();
-        let ready_payloads = self.ready_payloads_for_done_rows_tx(tx, rows).await?;
+        let ready_payloads = if rows
+            .iter()
+            .any(|row| !is_storage_payload_empty(&row.payload))
+        {
+            self.ready_payloads_for_done_rows_tx(tx, rows).await?
+        } else {
+            HashMap::new()
+        };
         let mut ordered_rows: Vec<&DoneJobRow> = rows.iter().collect();
         ordered_rows.sort_unstable_by_key(|row| {
             (
@@ -5631,6 +5638,13 @@ impl QueueStorage {
                         FROM completed
                         ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
                         RETURNING job_id, run_lease
+                    ),
+                    deleted_attempts AS (
+                        DELETE FROM {schema}.attempt_state AS attempt
+                        USING inserted
+                        WHERE attempt.job_id = inserted.job_id
+                          AND attempt.run_lease = inserted.run_lease
+                        RETURNING attempt.job_id
                     )
                     SELECT job_id, run_lease
                     FROM inserted
@@ -5644,28 +5658,6 @@ impl QueueStorage {
                 .map_err(map_sqlx_error)?;
 
                 if !updated.is_empty() {
-                    let updated_job_ids: Vec<i64> =
-                        updated.iter().map(|(job_id, _)| *job_id).collect();
-                    let updated_run_leases: Vec<i64> =
-                        updated.iter().map(|(_, run_lease)| *run_lease).collect();
-
-                    sqlx::query(&format!(
-                        r#"
-                        WITH completed(job_id, run_lease) AS (
-                            SELECT * FROM unnest($1::bigint[], $2::bigint[])
-                        )
-                        DELETE FROM {schema}.attempt_state AS attempt
-                        USING completed
-                        WHERE attempt.job_id = completed.job_id
-                          AND attempt.run_lease = completed.run_lease
-                        "#
-                    ))
-                    .bind(&updated_job_ids)
-                    .bind(&updated_run_leases)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_sqlx_error)?;
-
                     let finalized_at = Utc::now();
                     let mut done_rows = Vec::with_capacity(updated.len());
                     for (job_id, run_lease) in &updated {
