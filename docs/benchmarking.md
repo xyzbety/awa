@@ -191,6 +191,37 @@ The two tracks are deliberately separate. If they ever diverge on
 workload shape or thresholds, the awa-only benches in this file are
 canonical for awa's own numbers and the cross-system runner defers.
 
+### 2026-05-03 cross-system reference run
+
+An overnight run of the companion benchmark repo compared `awa` 0.6 alpha
+builds with the same phase-driven harness. Treat these as reference results for
+shape and regression tracking, not universal product guarantees.
+
+Key observations:
+
+- `awa` peak throughput improved by `49%` from 0.6.0-alpha.2 to
+  0.6.0-alpha.3 at 128 workers and one replica: `4,576` to `6,834` jobs/s.
+  The same run showed a roughly `1.5x` to `1.7x` improvement across the
+  worker-count matrix.
+- Phase A matrix shape for `awa`: `296` -> `1,115` -> `3,961` -> `6,834`
+  jobs/s as worker count increased.
+- Phase B `pgmq` peaked at `13,290` jobs/s at 16 workers and collapsed at
+  128 workers, matching the previously observed high-worker behaviour.
+- Phase C multi-replica runs exposed the remaining `awa` topology sensitivity:
+  at fixed total workers, throughput fell from `3,560` to `2,491` to `1,503`
+  jobs/s across `1x64`, `2x32`, and `4x16`. That shape is consistent with
+  fleet-wide completion flusher contention (`processes x AWA_COMPLETION_SHARDS`).
+  `pgque` moved in the opposite direction in the same run (`18,660` ->
+  `34,388` -> `38,810`), so this remains a useful comparison target rather
+  than noise to smooth over.
+- Phase D 60-minute `awa` soak sustained a median `5,369` jobs/s with median
+  dead tuples around `396`, validating the ADR-019 / ADR-023 hot-path
+  dead-tuple promise under sustained churn.
+
+Follow-up tuning should focus on the multi-process completion path: either
+attenuating default completion shards by fleet topology, coordinating flushers
+more explicitly, or reducing the per-flush contention footprint further.
+
 ## Python Runtime Benchmarks
 
 The Python benchmark script exercises the real `awa-python` worker path while
