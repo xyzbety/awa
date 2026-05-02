@@ -70,6 +70,16 @@ struct CompletionRequest {
     response: oneshot::Sender<Result<bool, AwaError>>,
 }
 
+fn completion_sort_key(request: &CompletionRequest) -> (i32, i64, RunLease) {
+    let claim_slot = request
+        .runtime_job
+        .as_ref()
+        .map(|runtime_job| runtime_job.claim.claim_slot)
+        .or_else(|| request.claim.as_ref().map(|claim| claim.claim_slot))
+        .unwrap_or(i32::MAX);
+    (claim_slot, request.job_id, request.run_lease)
+}
+
 #[derive(Clone)]
 pub(crate) struct CompletionBatcherHandle {
     shards: Vec<mpsc::Sender<CompletionRequest>>,
@@ -234,7 +244,7 @@ impl CompletionWorker {
         }
 
         let mut batch: Vec<_> = std::mem::take(pending);
-        batch.sort_unstable_by_key(|request| (request.job_id, request.run_lease));
+        batch.sort_unstable_by_key(completion_sort_key);
         let job_ids: Vec<i64> = batch.iter().map(|request| request.job_id).collect();
         let run_leases: Vec<i64> = batch.iter().map(|request| request.run_lease).collect();
         let flush_start = std::time::Instant::now();
@@ -346,6 +356,54 @@ mod tests {
             .expect("Failed to connect to database");
         migrations::run(&pool).await.expect("Failed to migrate");
         pool
+    }
+
+    fn completion_request_with_claim_slot(
+        job_id: i64,
+        run_lease: i64,
+        claim_slot: i32,
+    ) -> CompletionRequest {
+        let (response, _rx) = oneshot::channel();
+        CompletionRequest {
+            job_id,
+            run_lease,
+            claim: Some(ClaimedEntry {
+                queue: "default".to_string(),
+                priority: 0,
+                lane_seq: job_id,
+                ready_slot: 0,
+                ready_generation: 0,
+                lease_slot: 0,
+                lease_generation: 0,
+                claim_slot,
+                lease_claim_receipt: true,
+            }),
+            runtime_job: None,
+            response,
+        }
+    }
+
+    #[test]
+    fn completion_sort_groups_receipt_slots_before_job_id() {
+        let mut requests = vec![
+            completion_request_with_claim_slot(10, 1, 3),
+            completion_request_with_claim_slot(2, 1, 1),
+            completion_request_with_claim_slot(1, 1, 3),
+        ];
+
+        requests.sort_unstable_by_key(completion_sort_key);
+
+        let ordered: Vec<_> = requests
+            .iter()
+            .map(|request| {
+                (
+                    request.claim.as_ref().unwrap().claim_slot,
+                    request.job_id,
+                    request.run_lease,
+                )
+            })
+            .collect();
+        assert_eq!(ordered, vec![(1, 2, 1), (3, 1, 1), (3, 10, 1)]);
     }
 
     async fn clean_queue(pool: &PgPool, queue: &str) {
