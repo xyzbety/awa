@@ -21,29 +21,40 @@ in:
 
 ```mermaid
 flowchart LR
-    subgraph Producers["Producers (Rust or Python)"]
-        P1["BEGIN<br/>app writes<br/>awa insert<br/>COMMIT"]
+    subgraph App["Application process"]
+        AppTx["Producer transaction<br/>app writes + awa enqueue"]
+        RustWorker["Rust worker handlers"]
+        PyWorker["Python worker handlers<br/>PyO3"]
+        HttpWorker["HTTP callback handlers<br/>HMAC verified"]
+    end
+
+    subgraph Runtime["Awa runtime"]
+        Dispatcher["Dispatcher<br/>LISTEN/NOTIFY + poll"]
+        Completion["Completion batcher"]
+        Heartbeat["Heartbeat service"]
+        Maintenance["Maintenance service<br/>leader elected"]
     end
 
     subgraph PG["Postgres - sole infrastructure dependency"]
         direction TB
-        Queue["Queue plane<br/>ready_entries<br/>deferred_jobs<br/>done_entries<br/>dlq_entries"]
-        Exec["Execution plane<br/>lease_claims<br/>lease_claim_closures<br/>leases<br/>attempt_state"]
-        Ctrl["Control plane<br/>queue_lanes<br/>queue_enqueue_heads<br/>queue_claim_heads<br/>*_ring_state<br/>*_ring_slots<br/>job_unique_claims<br/>cron_jobs<br/>runtime_instances"]
+        Queue["Queue plane<br/>ready / deferred / done / dlq"]
+        Exec["Execution plane<br/>receipts / leases / attempt_state"]
+        Ctrl["Control plane<br/>lanes / heads / rings / uniqueness / cron / runtimes"]
     end
 
-    subgraph Workers["Workers"]
-        RW["Rust runtime<br/>dispatch<br/>leases<br/>heartbeats<br/>rescue<br/>maintenance"]
-        PY["Python workers<br/>PyO3 bindings<br/>same runtime"]
-        HTTP["HTTP workers<br/>Lambda / Cloud Run<br/>HMAC-signed callbacks"]
-    end
-
-    P1 -- "transactional enqueue" --> Queue
-    Queue -- "LISTEN/NOTIFY + poll fallback" --> RW
-    RW <--> Exec
-    RW <--> Ctrl
-    PY -. "PyO3" .-> RW
-    HTTP -- "X-Awa-Signature" --> RW
+    AppTx -- "transactional enqueue" --> Queue
+    Queue -- "wakeups + SKIP LOCKED claims" --> Dispatcher
+    Dispatcher --> RustWorker
+    Dispatcher --> PyWorker
+    HttpWorker -- "resume_external" --> Dispatcher
+    RustWorker --> Completion
+    PyWorker --> Completion
+    Completion --> Exec
+    Heartbeat --> Exec
+    Maintenance --> Queue
+    Maintenance --> Exec
+    Maintenance --> Ctrl
+    Dispatcher <--> Ctrl
 ```
 
 The maintenance service runs in every worker process, but only the instance
@@ -204,15 +215,15 @@ sequenceDiagram
     participant R as Ring state
 
     W->>W: acquire local concurrency permit
-    N-->>W: NOTIFY awa:&lt;queue&gt;<br/>(or poll fallback)
+    N-->>W: NOTIFY awa queue name or poll fallback
     W->>Q: claim_runtime_batch_with_aging_for_instance
-    Q->>Q: lock one queue_claim_heads row<br/>FOR UPDATE SKIP LOCKED
-    Q->>R: read lease_ring_state and claim_ring_state<br/>at statement snapshot
-    Q->>Q: append lease_claims receipt<br/>or materialize leases row
+    Q->>Q: lock one queue_claim_heads row with FOR UPDATE SKIP LOCKED
+    Q->>R: read lease_ring_state and claim_ring_state at statement snapshot
+    Q->>Q: append lease_claims receipt or materialize leases row
     Q->>Q: advance queue_claim_heads
     Q-->>W: claimed batch + run_lease
 
-    Note over W,Q: Receipt-backed jobs avoid mutable lease rows until<br/>progress, callback, wait, or other lease-specific state is needed.
+    Note over W,Q: Receipt-backed jobs avoid mutable lease rows until progress, callback, wait, or other lease-specific state is needed.
 ```
 
 - `queue_enqueue_heads` allocates dense lane sequences at enqueue time.
@@ -301,16 +312,16 @@ sequenceDiagram
     Note over H,A: Pattern A - release the task slot
     H->>A: register_callback(token)
     H->>A: return WaitForCallback(token)
-    A->>A: state = waiting_external<br/>task slot freed
+    A->>A: state = waiting_external, task slot freed
     E-->>A: complete/fail/retry callback
     A->>A: terminal or retry transition
 
     Note over H,A: Pattern B - sequential wait in one handler
     H->>A: register_callback(token)
     H->>A: wait_for_callback(token).await
-    A->>A: state = waiting_external<br/>handler task suspended
+    A->>A: state = waiting_external, handler task suspended
     E-->>A: resume_external(token, payload)
-    A->>A: state = running<br/>store callback result
+    A->>A: state = running, store callback result
     A-->>H: payload returned in place
 ```
 
