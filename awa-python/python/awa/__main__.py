@@ -11,7 +11,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import os
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 import awa
 
@@ -47,6 +51,15 @@ def _iso_datetime(raw: str) -> dt.datetime:
 
 
 def main() -> None:
+    # `serve` delegates to the awa-cli binary verbatim. We detect it before
+    # argparse so its --flags don't get rejected as unknown arguments
+    # (argparse's REMAINDER has long-standing bugs around ---prefixed
+    # tokens after a subparser).
+    serve_argv = _split_serve_argv(sys.argv[1:])
+    if serve_argv is not None:
+        _run_serve(serve_argv)
+        return
+
     parser = argparse.ArgumentParser(prog="awa", description="Awa job queue CLI")
     _add_database_url(parser)
     sub = parser.add_subparsers(dest="command")
@@ -136,6 +149,15 @@ def main() -> None:
     # deferred — they mutate production routing and deserve explicit safety
     # guardrails. Use the Rust CLI until dedicated Python subcommands land.
 
+    # serve ---------------------------------------------------------------
+    # `serve` is intercepted before argparse runs (see above). Register a
+    # placeholder so it shows up in `python -m awa --help`.
+    sub.add_parser(
+        "serve",
+        help="Run the awa-ui dashboard (requires `pip install awa-pg[ui]`)",
+        add_help=False,
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -158,6 +180,72 @@ def main() -> None:
             sys.exit(1)
 
     asyncio.run(_dispatch(args))
+
+
+def _split_serve_argv(argv: list[str]) -> list[str] | None:
+    """Walk `argv` past the top-level `--database-url ...` (if present) and
+    return the verbatim tail to forward to `awa serve` when the next
+    positional is `serve`. Returns None if `serve` is not the chosen
+    subcommand."""
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--":
+            return None
+        if token in {"-h", "--help"}:
+            return None
+        if token == "--database-url" and i + 1 < len(argv):
+            i += 2
+            continue
+        if token.startswith("--database-url="):
+            i += 1
+            continue
+        if token == "serve":
+            return argv  # forward the entire tail, including any pre-serve --database-url
+        return None
+    return None
+
+
+def _run_serve(forwarded_argv: list[str]) -> None:
+    binary = _find_awa_binary()
+    if binary is None:
+        print(
+            "`awa serve` requires the awa-cli binary, which ships the dashboard\n"
+            "and React bundle. Install it with:\n"
+            "\n"
+            "    pip install 'awa-pg[ui]'\n"
+            "\n"
+            "Or, if you only need the CLI without the SDK, `pip install awa-cli`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Forward stdio + signals; Ctrl+C reaches the child's tokio runtime
+    # cleanly without us needing explicit handlers.
+    result = subprocess.run([str(binary), *forwarded_argv])
+    sys.exit(result.returncode)
+
+
+def _find_awa_binary() -> Path | None:
+    """Locate the awa-cli wheel's `awa` executable.
+
+    Prefers the current interpreter's script directory (where the [ui]
+    extra install lands) so we don't accidentally exec a stale binary
+    from PATH that targets a different awa version.
+    """
+    script_dirs = [Path(sys.prefix) / "bin", Path(sys.prefix) / "Scripts"]
+    for d in script_dirs:
+        for candidate in (d / "awa", d / "awa.exe"):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    # Last-resort PATH lookup. Skip if it resolves back to this Python entry
+    # point (would be a recursion if awa-pg ever registers an `awa` script).
+    found = shutil.which("awa")
+    if found:
+        resolved = Path(found).resolve()
+        if resolved.suffix not in {".py", ".pyw"}:
+            return resolved
+    return None
 
 
 async def _dispatch(args: argparse.Namespace) -> None:

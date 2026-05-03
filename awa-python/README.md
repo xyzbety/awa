@@ -54,13 +54,17 @@ codebases that aren't async-first.
   rate limits, deadlines, retry/backoff, cron, dead-letter queue.
 - **Progress tracking** — handlers can write structured progress that
   survives across retries.
-- **Web UI** — `awa serve` (or `awa-cli`) gives you a live dashboard for
-  the running queue, including DLQ inspection and retry controls.
+- **Web UI (optional)** — `pip install 'awa-pg[ui]'` pulls in the
+  [`awa-cli`](https://pypi.org/project/awa-cli/) wheel, which ships the
+  dashboard binary. Then `python -m awa serve` (or `awa serve` directly)
+  runs a live queue inspector, DLQ triage console, and retry controls
+  on `http://127.0.0.1:3000`. The default `awa-pg` install stays small
+  for workers and producers that don't need the dashboard.
 
 ## Migrations
 
 ```bash
-awa migrate --database-url "$DATABASE_URL"
+python -m awa --database-url "$DATABASE_URL" migrate
 ```
 
 Fresh installs go straight to the queue-storage engine on first migrate.

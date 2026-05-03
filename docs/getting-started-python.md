@@ -31,13 +31,13 @@ export DATABASE_URL=postgres://postgres:test@localhost:15432/awa_test
 python -m venv .venv
 source .venv/bin/activate
 
-pip install awa-pg awa-cli
+pip install awa-pg
 ```
 
 ## 2. Run Migrations
 
 ```bash
-awa --database-url "$DATABASE_URL" migrate
+python -m awa --database-url "$DATABASE_URL" migrate
 ```
 
 ## 3. Create a Worker
@@ -101,16 +101,25 @@ job 1 state = JobState.Completed
 ## 5. Inspect the Queue
 
 ```bash
-awa --database-url "$DATABASE_URL" job list --queue email
-awa --database-url "$DATABASE_URL" job dump 1
-awa --database-url "$DATABASE_URL" job dump-run 1
-awa --database-url "$DATABASE_URL" queue stats
-awa --database-url "$DATABASE_URL" serve
+python -m awa --database-url "$DATABASE_URL" job list --queue email
+python -m awa --database-url "$DATABASE_URL" job dump 1
+python -m awa --database-url "$DATABASE_URL" job dump-run 1
+python -m awa --database-url "$DATABASE_URL" queue stats
 ```
 
 `job dump` gives you the whole job snapshot as JSON. `job dump-run` focuses on one attempt: the current attempt uses live row data, while historical attempts are reconstructed from the stored `errors[]` history.
 
-The UI starts on `http://127.0.0.1:3000` by default.
+## 6. Web UI (optional)
+
+The dashboard ships in a separate wheel so the default `awa-pg` install stays small for workers and producers. Install the `[ui]` extra to bring in the `awa-cli` binary that hosts it:
+
+```bash
+pip install 'awa-pg[ui]'
+python -m awa --database-url "$DATABASE_URL" serve
+# → http://127.0.0.1:3000
+```
+
+`python -m awa serve` delegates to the `awa serve` binary (you can also call `awa serve` directly once the extra is installed). The UI is read-only when the database reports `transaction_read_only = on` (e.g. on a replica) or when `--read-only` is passed.
 
 ## Useful Variants
 

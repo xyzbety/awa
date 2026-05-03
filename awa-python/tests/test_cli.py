@@ -35,8 +35,96 @@ def test_help_lists_all_subcommands():
     """Regression: argparse wiring for every subcommand stays intact."""
     result = _cli("--help")
     assert result.returncode == 0, result.stderr
-    for cmd in ("migrate", "job", "queue", "dlq", "cron", "storage"):
+    for cmd in ("migrate", "job", "queue", "dlq", "cron", "storage", "serve"):
         assert cmd in result.stdout, f"top-level {cmd} missing from --help"
+
+
+def test_serve_without_awa_binary_directs_to_extra(tmp_path, monkeypatch):
+    """Without `awa-pg[ui]` installed there's no `awa` binary on PATH and
+    no script in sys.prefix/bin; `python -m awa serve` must surface an
+    explicit "install awa-pg[ui]" message instead of a confusing
+    FileNotFoundError or "command not found"."""
+    # Force the lookup to miss every possible location.
+    fake_prefix = tmp_path / "fake-prefix"
+    (fake_prefix / "bin").mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(fake_prefix / "bin"))
+
+    code = (
+        "import sys\n"
+        f"sys.prefix = {str(fake_prefix)!r}\n"
+        "sys.argv = ['awa', 'serve']\n"
+        "import awa.__main__\n"
+        "try:\n"
+        "    awa.__main__.main()\n"
+        "except SystemExit as e:\n"
+        "    print(f'EXIT={e.code}')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={**os.environ, "PATH": str(fake_prefix / "bin")},
+    )
+    assert "EXIT=1" in result.stdout, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "awa-pg[ui]" in result.stderr or "awa-cli" in result.stderr
+
+
+def test_serve_forwards_database_url_and_args_to_binary(tmp_path):
+    """`python -m awa --database-url X serve --port 80 --read-only` must
+    execute the bundled binary with the same flags verbatim. We stand up
+    a fake `awa` binary that records its argv, then assert the forwarded
+    command line."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    fake_awa = fake_bin_dir / "awa"
+    log_path = tmp_path / "argv.log"
+    fake_awa.write_text(
+        f"#!{sys.executable}\n"
+        f"import sys\n"
+        f"open({str(log_path)!r}, 'w').write('\\n'.join(sys.argv[1:]))\n"
+    )
+    fake_awa.chmod(0o755)
+
+    code = (
+        "import sys\n"
+        f"sys.prefix = {str(tmp_path)!r}\n"
+        "sys.argv = ['awa', '--database-url', 'postgres://x/y',\n"
+        "            'serve', '--port', '80', '--read-only']\n"
+        "import awa.__main__\n"
+        "try:\n"
+        "    awa.__main__.main()\n"
+        "except SystemExit:\n"
+        "    pass\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={**os.environ, "PATH": str(fake_bin_dir)},
+    )
+
+    forwarded = log_path.read_text().splitlines()
+    # We forward the full original tail (incl. the leading --database-url)
+    # so clap sees it exactly as if the user had run `awa` directly.
+    assert forwarded == [
+        "--database-url",
+        "postgres://x/y",
+        "serve",
+        "--port",
+        "80",
+        "--read-only",
+    ], forwarded
+
+
+def test_serve_top_level_help_does_not_delegate():
+    """`python -m awa --help` should print our own help, not exec the
+    binary. Regression for the early-detection branch's edge cases."""
+    result = _cli("--help")
+    assert result.returncode == 0
+    assert "Awa job queue CLI" in result.stdout
+    assert "serve" in result.stdout
 
 
 @pytest.mark.parametrize(
