@@ -1941,11 +1941,7 @@ impl QueueStorage {
                             selected.attempt + 1,
                             selected.max_attempts,
                             selected.lane_seq,
-                            CASE
-                                WHEN p_deadline_secs > 0
-                                    THEN clock_timestamp() + make_interval(secs => p_deadline_secs)
-                                ELSE NULL::timestamptz
-                            END
+                            v_deadline_at
                         FROM selected
                         CROSS JOIN claim_ring
                         RETURNING
@@ -2009,9 +2005,9 @@ impl QueueStorage {
                             selected.run_lease + 1,
                             selected.max_attempts,
                             selected.lane_seq,
-                            clock_timestamp(),
-                            clock_timestamp() + make_interval(secs => $6),
-                            clock_timestamp()
+                            v_claimed_at,
+                            COALESCE(v_deadline_at, v_claimed_at + make_interval(secs => $6)),
+                            v_claimed_at
                         FROM selected
                         CROSS JOIN lease_ring
                         RETURNING
@@ -2738,16 +2734,15 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-            // Partial index for the deadline-rescue scan. Receipt-mode
-            // claims with non-NULL deadline_at represent the population
-            // of in-flight short-path attempts that can still time out;
-            // the index keeps the rescue scan O(expired) rather than
-            // O(all-open-claims).
+            // Low-write index for the deadline-rescue scan. Claim deadlines
+            // are append-heavy and roughly time-ordered, so BRIN avoids a
+            // btree insert on every short-path claim while still letting
+            // rescue skip ranges whose deadlines are all in the future.
             sqlx::query(&format!(
                 r#"
-            CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claims_deadline
-                ON {schema}.lease_claims (deadline_at)
-                WHERE deadline_at IS NOT NULL
+            CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claims_deadline_brin
+                ON {schema}.lease_claims USING BRIN (deadline_at)
+                WITH (pages_per_range = 16)
             "#
             ))
             .execute(pool)
@@ -3313,6 +3308,8 @@ impl QueueStorage {
                 v_claimed_count BIGINT;
                 v_target_slot INT;
                 v_target_generation BIGINT;
+                v_claimed_at TIMESTAMPTZ;
+                v_deadline_at TIMESTAMPTZ;
             BEGIN
                 SELECT
                     claims.priority,
@@ -3380,6 +3377,13 @@ impl QueueStorage {
                 v_claim_limit := LEAST(GREATEST(v_lane_next_seq - v_lane_claim_seq, 0), p_max_batch);
                 IF v_claim_limit <= 0 THEN
                     RETURN;
+                END IF;
+
+                v_claimed_at := clock_timestamp();
+                IF p_deadline_secs > 0 THEN
+                    v_deadline_at := v_claimed_at + make_interval(secs => p_deadline_secs);
+                ELSE
+                    v_deadline_at := NULL::timestamptz;
                 END IF;
 
                 RETURN QUERY
@@ -3453,15 +3457,12 @@ impl QueueStorage {
                     claimed.max_attempts,
                     selected.run_at,
                     CASE
-                        WHEN p_deadline_secs > 0 THEN clock_timestamp()
+                        WHEN p_deadline_secs > 0 THEN v_claimed_at
                         ELSE NULL::timestamptz
                     END AS heartbeat_at,
+                    v_deadline_at AS deadline_at,
                     CASE
-                        WHEN p_deadline_secs > 0 THEN clock_timestamp() + make_interval(secs => p_deadline_secs)
-                        ELSE NULL::timestamptz
-                    END AS deadline_at,
-                    CASE
-                        WHEN p_deadline_secs > 0 THEN clock_timestamp()
+                        WHEN p_deadline_secs > 0 THEN v_claimed_at
                         ELSE NULL::timestamptz
                     END AS attempted_at,
                     selected.created_at,

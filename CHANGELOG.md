@@ -5,6 +5,8 @@ transitions live in [`docs/upgrade-0.5-to-0.6.md`](docs/upgrade-0.5-to-0.6.md).
 
 ## Unreleased
 
+## [0.6.0-alpha.8] — 2026-05-08
+
 ### Added
 
 - **Lifecycle hooks now include `Started` events**. `JobEvent<T>` and
@@ -18,6 +20,13 @@ transitions live in [`docs/upgrade-0.5-to-0.6.md`](docs/upgrade-0.5-to-0.6.md).
   `UntypedJobEvent` must handle the new `Started` variant. No stable Awa
   release has been published yet, so this is documented as an alpha-series
   source break.
+
+- **Reduced queue-storage per-claim deadline overhead.** Fresh queue-storage
+  schemas now use a low-write BRIN index for `lease_claims.deadline_at`, and
+  the claim helper computes claim/deadline timestamps once per batch instead of
+  per returned row. Deadline rescue semantics are unchanged; this targets the
+  alpha.8 benchmark path where non-zero `QueueConfig::deadline_duration` is
+  enabled for short receipt-plane jobs.
 
 ## [0.6.0-alpha.7] — 2026-05-07
 
