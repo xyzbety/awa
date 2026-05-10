@@ -166,8 +166,10 @@ pub struct QueueCounts {
 }
 
 /// Cheap available-only signal used by the dispatcher's claimer-sizing
-/// control loop. Reads `sum(queue_lanes.available_count)` for the
-/// queue's physical stripes — O(few rows) regardless of backlog size.
+/// control loop. Derives the count from
+/// `queue_enqueue_heads.next_seq − queue_claim_heads.claim_seq`
+/// summed over the queue's physical stripes (ADR / v016) — two PK
+/// reads per lane, O(few rows) regardless of backlog size.
 ///
 /// This is intentionally a separate type from [`QueueCounts`]: the
 /// dispatcher claim hot path only consumes the available count, and
@@ -2261,7 +2263,6 @@ impl QueueStorage {
                 priority        SMALLINT NOT NULL,
                 next_seq        BIGINT NOT NULL DEFAULT 1,
                 claim_seq       BIGINT NOT NULL DEFAULT 1,
-                available_count BIGINT NOT NULL DEFAULT 0,
                 pruned_completed_count BIGINT NOT NULL DEFAULT 0,
                 PRIMARY KEY (queue, priority)
             )
@@ -2353,10 +2354,11 @@ impl QueueStorage {
             // queue_count_snapshots was the staleness-cached counterpart
             // of queue_counts_exact when the dispatcher's claim hot path
             // still polled exact counts. After the queue_counts perf
-            // fix the dispatcher reads queue_lanes.available_count
-            // directly (O(few rows)), and nothing else needs the
-            // snapshot. Drop the table on every prepare_schema so an
-            // upgrade from a pre-fix install reclaims the storage.
+            // fix the dispatcher derives the available count from the
+            // head tables (v016: `next_seq - claim_seq`) directly
+            // (O(few rows)), and nothing else needs the snapshot. Drop
+            // the table on every prepare_schema so an upgrade from a
+            // pre-fix install reclaims the storage.
             sqlx::query(&format!(
                 "DROP TABLE IF EXISTS {schema}.queue_count_snapshots"
             ))
@@ -2527,55 +2529,10 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-            // The available_count backfill needs `ready_entries` to exist.
-            // On a fresh install, ready_entries is created later in this same
-            // prepare_schema run (see the DDL block ~400 lines below). Guard
-            // both backfills with a to_regclass check so this transaction
-            // works for both upgrades (table already there) and fresh installs
-            // (skip — there's nothing to backfill, queue_lanes is empty).
-            sqlx::query(&format!(
-                r#"
-            DO $$
-            BEGIN
-                IF to_regclass('{schema}.ready_entries') IS NOT NULL THEN
-                    WITH live_ready AS (
-                        SELECT
-                            ready.queue,
-                            ready.priority,
-                            count(*)::bigint AS available_count
-                        FROM {schema}.ready_entries AS ready
-                        JOIN {schema}.queue_claim_heads AS claims
-                          ON claims.queue = ready.queue
-                         AND claims.priority = ready.priority
-                        WHERE ready.lane_seq >= claims.claim_seq
-                        GROUP BY ready.queue, ready.priority
-                    )
-                    UPDATE {schema}.queue_lanes AS lanes
-                    SET available_count = COALESCE(live_ready.available_count, 0)
-                    FROM live_ready
-                    WHERE lanes.queue = live_ready.queue
-                      AND lanes.priority = live_ready.priority;
-
-                    UPDATE {schema}.queue_lanes AS lanes
-                    SET available_count = 0
-                    WHERE available_count <> 0
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM {schema}.ready_entries AS ready
-                          JOIN {schema}.queue_claim_heads AS claims
-                            ON claims.queue = ready.queue
-                           AND claims.priority = ready.priority
-                          WHERE ready.queue = lanes.queue
-                            AND ready.priority = lanes.priority
-                            AND ready.lane_seq >= claims.claim_seq
-                      );
-                END IF;
-            END $$
-            "#
-            ))
-            .execute(backfill_tx.as_mut())
-            .await
-            .map_err(map_sqlx_error)?;
+            // v016: queue_lanes.available_count was dropped; the reader
+            // derives the available count from queue_enqueue_heads.next_seq
+            // minus queue_claim_heads.claim_seq. No backfill is required —
+            // both head tables already maintain the source of truth.
 
             backfill_tx.commit().await.map_err(map_sqlx_error)?;
 
@@ -3481,12 +3438,17 @@ impl QueueStorage {
 
                 GET DIAGNOSTICS v_claimed_count = ROW_COUNT;
 
-                IF v_claimed_count > 0 THEN
-                    UPDATE {schema}.queue_lanes AS lanes
-                    SET available_count = GREATEST(0, lanes.available_count - v_claimed_count)
-                    WHERE lanes.queue = p_queue
-                      AND lanes.priority = v_lane_priority;
-                ELSE
+                -- v016: queue_lanes.available_count was dropped; the
+                -- derived count (next_seq - claim_seq) decreases naturally
+                -- as the `advanced` CTE above bumps claim_seq past the
+                -- claimed lane_seq. The only remaining branch is the
+                -- gap-recovery case below: if no rows were claimed but
+                -- the head says the queue is non-empty (next_seq >
+                -- claim_seq), there are deleted/missing lanes between
+                -- claim_seq and next_seq. Advance claim_seq to catch
+                -- up so subsequent reads of (next_seq - claim_seq)
+                -- don't over-count.
+                IF v_claimed_count = 0 THEN
                     UPDATE {schema}.queue_claim_heads AS claims
                     SET claim_seq = GREATEST(claims.claim_seq, v_lane_next_seq)
                     WHERE claims.queue = p_queue
@@ -4096,19 +4058,10 @@ impl QueueStorage {
         self.sync_ready_enqueue_unique_claims(tx, &ready_rows)
             .await?;
         self.execute_ready_inserts_tx(tx, &ready_rows).await?;
-        let mut count_deltas: BTreeMap<(String, i16), i64> = BTreeMap::new();
-        for row in &ready_rows {
-            *count_deltas
-                .entry((row.queue.clone(), row.priority))
-                .or_insert(0) += 1;
-        }
-        self.adjust_lane_counts_batch(
-            tx,
-            count_deltas
-                .into_iter()
-                .map(|((queue, priority), count)| (queue, priority, count, 0)),
-        )
-        .await?;
+        // v016: enqueue's contribution to the available count is
+        // captured by the next_seq advance that
+        // `execute_ready_inserts_tx` already drove. No separate
+        // counter to maintain.
         Ok(total_rows)
     }
 
@@ -4187,19 +4140,8 @@ impl QueueStorage {
         self.sync_ready_enqueue_unique_claims(tx, &ready_rows)
             .await?;
         self.execute_ready_copy_tx(tx, &ready_rows).await?;
-        let mut count_deltas: BTreeMap<(String, i16), i64> = BTreeMap::new();
-        for row in &ready_rows {
-            *count_deltas
-                .entry((row.queue.clone(), row.priority))
-                .or_insert(0) += 1;
-        }
-        self.adjust_lane_counts_batch(
-            tx,
-            count_deltas
-                .into_iter()
-                .map(|((queue, priority), count)| (queue, priority, count, 0)),
-        )
-        .await?;
+        // v016: see equivalent comment above — enqueue's contribution
+        // to the available count flows through next_seq.
         Ok(total_rows)
     }
 
@@ -4275,19 +4217,8 @@ impl QueueStorage {
         }
 
         self.execute_ready_inserts_tx(tx, &ready_rows).await?;
-        let mut count_deltas: BTreeMap<(String, i16), i64> = BTreeMap::new();
-        for row in &ready_rows {
-            *count_deltas
-                .entry((row.queue.clone(), row.priority))
-                .or_insert(0) += 1;
-        }
-        self.adjust_lane_counts_batch(
-            tx,
-            count_deltas
-                .into_iter()
-                .map(|((queue, priority), count)| (queue, priority, count, 0)),
-        )
-        .await?;
+        // v016: see equivalent comment above — enqueue's contribution
+        // to the available count flows through next_seq.
         Ok(total_rows)
     }
 
@@ -4605,95 +4536,14 @@ impl QueueStorage {
         Ok(rows.len())
     }
 
-    async fn adjust_lane_counts<'a>(
-        &self,
-        tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
-        queue: &str,
-        priority: i16,
-        available_delta: i64,
-        pruned_completed_delta: i64,
-    ) -> Result<(), AwaError> {
-        self.adjust_lane_counts_batch(
-            tx,
-            [(
-                queue.to_string(),
-                priority,
-                available_delta,
-                pruned_completed_delta,
-            )],
-        )
-        .await
-    }
-
-    async fn adjust_lane_counts_batch<'a, I>(
-        &self,
-        tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
-        deltas: I,
-    ) -> Result<(), AwaError>
-    where
-        I: IntoIterator<Item = (String, i16, i64, i64)>,
-    {
-        let mut grouped: BTreeMap<(String, i16), (i64, i64)> = BTreeMap::new();
-        for (queue, priority, available_delta, pruned_completed_delta) in deltas {
-            if available_delta == 0 && pruned_completed_delta == 0 {
-                continue;
-            }
-            let entry = grouped.entry((queue, priority)).or_insert((0_i64, 0_i64));
-            entry.0 += available_delta;
-            entry.1 += pruned_completed_delta;
-        }
-
-        if grouped.is_empty() {
-            return Ok(());
-        }
-
-        let schema = self.schema();
-        let mut queues = Vec::with_capacity(grouped.len());
-        let mut priorities = Vec::with_capacity(grouped.len());
-        let mut available_deltas = Vec::with_capacity(grouped.len());
-        let mut pruned_completed_deltas = Vec::with_capacity(grouped.len());
-
-        for ((queue, priority), (available_delta, pruned_completed_delta)) in grouped {
-            queues.push(queue);
-            priorities.push(priority);
-            available_deltas.push(available_delta);
-            pruned_completed_deltas.push(pruned_completed_delta);
-        }
-
-        sqlx::query(&format!(
-            r#"
-            WITH deltas(queue, priority, available_delta, pruned_completed_delta) AS (
-                SELECT *
-                FROM unnest(
-                    $1::text[],
-                    $2::smallint[],
-                    $3::bigint[],
-                    $4::bigint[]
-                )
-            )
-            UPDATE {schema}.queue_lanes
-            SET available_count = GREATEST(
-                    0,
-                    queue_lanes.available_count + deltas.available_delta
-                ),
-                pruned_completed_count = GREATEST(
-                    0,
-                    queue_lanes.pruned_completed_count + deltas.pruned_completed_delta
-                )
-            FROM deltas
-            WHERE queue_lanes.queue = deltas.queue
-              AND queue_lanes.priority = deltas.priority
-            "#
-        ))
-        .bind(&queues)
-        .bind(&priorities)
-        .bind(&available_deltas)
-        .bind(&pruned_completed_deltas)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(())
-    }
+    // v016: `adjust_lane_counts` and `adjust_lane_counts_batch` were
+    // removed when `queue_lanes.available_count` was dropped. Every
+    // historical caller passed `pruned_completed_delta = 0`, so the
+    // entire helper collapsed to a no-op once `available_count` was
+    // gone. `queue_lanes.pruned_completed_count` is still mutated, but
+    // that happens via `adjust_terminal_rollups_batch` and the prune
+    // path's direct INSERT into `queue_terminal_rollups`. Available-
+    // count reads compute `next_seq - claim_seq` from the head tables.
 
     async fn adjust_terminal_rollups_batch<'a, I>(
         &self,
@@ -5373,11 +5223,13 @@ impl QueueStorage {
         signal: &AvailableSignal,
         max_claimers: i16,
     ) -> i16 {
-        // The signal source (queue_lanes.available_count) tracks
-        // unclaimed lane positions, so we don't subtract a running
-        // count — claimed rows are already excluded by the counter.
-        // Keep the original `backlog` name in the threshold table so
-        // future tweaks can compare against the pre-fix shape.
+        // The signal source (`queue_enqueue_heads.next_seq -
+        // queue_claim_heads.claim_seq`, per v016) is the count of
+        // lane positions enqueued but not yet claimed, so we don't
+        // subtract a running count — already-claimed rows are excluded
+        // by the claim_seq advance. Keep the original `backlog` name
+        // in the threshold table so future tweaks can compare against
+        // the pre-fix shape.
         let available = signal.available.max(0) as u64;
         let backlog = available;
         let current = current_target.unwrap_or(1).clamp(1, max_claimers.max(1));
@@ -5495,11 +5347,17 @@ impl QueueStorage {
     ) -> Result<AvailableSignal, AwaError> {
         let schema = self.schema();
         let queues = self.physical_queues_for_logical(queue);
+        // v016: derive available from the two head tables. Two PK
+        // reads per (queue, priority) lane via the JOIN; no longer
+        // touches the heavily-mutated queue_lanes heap.
         let available: i64 = sqlx::query_scalar(&format!(
             r#"
-            SELECT COALESCE(sum(available_count), 0)::bigint
-            FROM {schema}.queue_lanes
-            WHERE queue = ANY($1)
+            SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint
+            FROM {schema}.queue_enqueue_heads AS qe
+            JOIN {schema}.queue_claim_heads AS qc
+              ON qc.queue = qe.queue
+             AND qc.priority = qe.priority
+            WHERE qe.queue = ANY($1)
             "#
         ))
         .bind(&queues)
@@ -6095,10 +5953,20 @@ impl QueueStorage {
         let row: (i64, i64, i64) = sqlx::query_as(&format!(
             r#"
             WITH lane_counts AS (
-                SELECT
-                    COALESCE(sum(available_count), 0)::bigint AS available
-                FROM {schema}.queue_lanes
-                WHERE queue = ANY($1)
+                -- v016: queue_lanes.available_count was dropped. The
+                -- admin-grade API needs an exact count, so we scan
+                -- ready_entries with the same lane_seq >= claim_seq
+                -- predicate the legacy ground-truth CTE used. The hot
+                -- path (queue_claimer_signal) takes the cheap
+                -- `next_seq - claim_seq` approximation; this slower
+                -- scan is reserved for admin / UI calls.
+                SELECT COALESCE(count(*)::bigint, 0) AS available
+                FROM {schema}.ready_entries AS ready
+                JOIN {schema}.queue_claim_heads AS claims
+                  ON claims.queue = ready.queue
+                 AND claims.priority = ready.priority
+                WHERE ready.queue = ANY($1)
+                  AND ready.lane_seq >= claims.claim_seq
             ),
             pruned_terminal AS (
                 SELECT COALESCE(
@@ -6234,8 +6102,6 @@ impl QueueStorage {
             };
             self.insert_existing_ready_rows_tx(tx, vec![ready_row.clone()], Some(waiting.state))
                 .await?;
-            self.adjust_lane_counts(tx, &waiting.queue, waiting.priority, 0, 0)
-                .await?;
             self.notify_queues_tx(tx, std::iter::once(waiting.queue.clone()))
                 .await?;
             return Ok(Some(
@@ -6315,8 +6181,6 @@ impl QueueStorage {
                 payload: terminal.payload,
             };
             self.insert_existing_ready_rows_tx(tx, vec![ready_row.clone()], Some(terminal.state))
-                .await?;
-            self.adjust_lane_counts(tx, &terminal.queue, terminal.priority, 0, 0)
                 .await?;
             self.notify_queues_tx(tx, std::iter::once(terminal.queue.clone()))
                 .await?;
@@ -6493,8 +6357,29 @@ impl QueueStorage {
                     .into_done_row(JobState::Cancelled, Utc::now(), ready.payload.clone());
             self.insert_done_rows_tx(tx, std::slice::from_ref(&done), Some(JobState::Available))
                 .await?;
-            self.adjust_lane_counts(tx, &ready.queue, ready.priority, -1, 0)
-                .await?;
+            // v016: if the cancelled lane was *exactly* at the claim
+            // head, advance the head past it so the derived
+            // `next_seq - claim_seq` count drops by 1 without waiting
+            // for the dispatcher's gap-recovery branch. When other
+            // unclaimed lanes still sit between claim_seq and the
+            // cancelled lane_seq, leave claim_seq alone — advancing
+            // would skip past those still-claimable rows. Gap-recovery
+            // absorbs the over-count later, when claim_seq catches up.
+            sqlx::query(&format!(
+                r#"
+                UPDATE {schema}.queue_claim_heads
+                SET claim_seq = claim_seq + 1
+                WHERE queue = $1
+                  AND priority = $2
+                  AND claim_seq = $3
+                "#
+            ))
+            .bind(&ready.queue)
+            .bind(ready.priority)
+            .bind(ready.lane_seq)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_sqlx_error)?;
             return Ok(Some(done.into_job_row()?));
         }
 
@@ -6539,8 +6424,6 @@ impl QueueStorage {
                 .clone()
                 .into_done_row(JobState::Cancelled, Utc::now(), done_payload);
             self.insert_done_rows_tx(tx, std::slice::from_ref(&done), Some(lease.state))
-                .await?;
-            self.adjust_lane_counts(tx, &lease.queue, lease.priority, 0, 0)
                 .await?;
             // Receipt-plane consistency: close any matching open
             // receipt so the ADR-023 anti-join no longer considers this
@@ -6718,7 +6601,6 @@ impl QueueStorage {
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_sqlx_error)?;
-                self.adjust_lane_counts(tx, &queue, priority, 0, 0).await?;
                 self.notify_cancellation_tx(tx, job_id, run_lease).await?;
                 return Ok(Some(done.into_job_row()?));
             }
@@ -6779,8 +6661,6 @@ impl QueueStorage {
                 payload: deferred.payload,
             };
             self.insert_done_rows_tx(tx, std::slice::from_ref(&done), Some(deferred.state))
-                .await?;
-            self.adjust_lane_counts(tx, &done.queue, done.priority, 0, 0)
                 .await?;
             return Ok(Some(done.into_job_row()?));
         }
@@ -6885,14 +6765,10 @@ impl QueueStorage {
         let mut ids = Vec::with_capacity(moved.len());
         let mut queues = BTreeSet::new();
         let mut ready_rows = Vec::with_capacity(moved.len());
-        let mut removed_count_deltas: BTreeMap<(String, i16), i64> = BTreeMap::new();
 
         for row in moved {
             ids.push(row.job_id);
             queues.insert(row.queue.clone());
-            *removed_count_deltas
-                .entry((row.queue.clone(), row.priority))
-                .or_insert(0) -= 1;
 
             let mut payload = RuntimePayload::from_json(row.payload)?;
             let metadata = payload.metadata.as_object_mut().ok_or_else(|| {
@@ -6922,13 +6798,14 @@ impl QueueStorage {
             });
         }
 
-        self.adjust_lane_counts_batch(
-            &mut tx,
-            removed_count_deltas
-                .into_iter()
-                .map(|((queue, priority), count)| (queue, priority, count, 0)),
-        )
-        .await?;
+        // v016: aging deletes ready rows from the source lane without
+        // moving the source's claim_seq, then re-inserts on the target
+        // lane (which bumps target's next_seq). Source's derived
+        // available (`next_seq - claim_seq`) over-counts by `moved`
+        // until the dispatcher's next claim attempt on that lane
+        // hits the gap-recovery branch in `claim_ready_runtime` and
+        // catches claim_seq up to next_seq. The drift is bounded by
+        // aging rate × poll interval and self-corrects.
         self.insert_existing_ready_rows_tx(&mut tx, ready_rows, Some(JobState::Available))
             .await?;
         self.notify_queues_tx(&mut tx, queues).await?;
@@ -8689,8 +8566,6 @@ impl QueueStorage {
                 .into_done_row(JobState::Completed, Utc::now(), payload.into_json());
         self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done_row), Some(moved.state))
             .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
-            .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         done_row.into_job_row()
     }
@@ -8787,8 +8662,6 @@ impl QueueStorage {
                 .into_done_row(JobState::Failed, Utc::now(), payload.into_json());
         self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done_row), Some(moved.state))
             .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
-            .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         done_row.into_job_row()
     }
@@ -8850,8 +8723,6 @@ impl QueueStorage {
             ..moved.clone().into_ready_row(Utc::now(), ready_payload)
         };
         self.insert_existing_ready_rows_tx(&mut tx, vec![ready_row.clone()], Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         self.notify_queues_tx(&mut tx, std::iter::once(moved.queue.clone()))
             .await?;
@@ -9082,8 +8953,6 @@ impl QueueStorage {
         );
         self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(moved.state))
             .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
-            .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(deferred.into_job_row()?))
     }
@@ -9117,8 +8986,6 @@ impl QueueStorage {
         );
         deferred.attempt = deferred.attempt.saturating_sub(1);
         self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(deferred.into_job_row()?))
@@ -9156,8 +9023,6 @@ impl QueueStorage {
                 .into_done_row(JobState::Cancelled, Utc::now(), payload.into_json());
         self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done), Some(moved.state))
             .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
-            .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(done.into_job_row()?))
     }
@@ -9188,8 +9053,6 @@ impl QueueStorage {
             .clone()
             .into_done_row(JobState::Failed, Utc::now(), payload.into_json());
         self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done), Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(done.into_job_row()?))
@@ -9227,8 +9090,6 @@ impl QueueStorage {
             dlq_at,
         );
         self.insert_dlq_rows_tx(&mut tx, std::slice::from_ref(&dlq_row), Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(dlq_row.into_job_row()?))
@@ -9290,8 +9151,6 @@ impl QueueStorage {
             .clone()
             .into_dlq_row(dlq_reason.to_string(), Utc::now());
         self.insert_dlq_rows_tx(&mut tx, std::slice::from_ref(&dlq_row), Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(dlq_row.into_job_row()?))
@@ -9660,8 +9519,6 @@ impl QueueStorage {
                     .into_done_row(JobState::Failed, Utc::now(), payload.into_json());
             self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done), Some(moved.state))
                 .await?;
-            self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
-                .await?;
             tx.commit().await.map_err(map_sqlx_error)?;
             return Ok(Some(done.into_job_row()?));
         }
@@ -9674,8 +9531,6 @@ impl QueueStorage {
             payload.into_json(),
         );
         self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(moved.state))
-            .await?;
-        self.adjust_lane_counts(&mut tx, &moved.queue, moved.priority, 0, 0)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(deferred.into_job_row()?))
@@ -9763,8 +9618,6 @@ impl QueueStorage {
             );
             self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(row.state))
                 .await?;
-            self.adjust_lane_counts(&mut tx, &row.queue, row.priority, 0, 0)
-                .await?;
             rescued.push(deferred.into_job_row()?);
         }
         for row in moved_receipts {
@@ -9785,8 +9638,6 @@ impl QueueStorage {
                 payload.into_json(),
             );
             self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(row.state))
-                .await?;
-            self.adjust_lane_counts(&mut tx, &row.queue, row.priority, 0, 0)
                 .await?;
             rescued.push(deferred.into_job_row()?);
         }
@@ -9875,8 +9726,6 @@ impl QueueStorage {
             );
             self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(row.state))
                 .await?;
-            self.adjust_lane_counts(&mut tx, &row.queue, row.priority, 0, 0)
-                .await?;
             rescued.push(deferred.into_job_row()?);
         }
         tx.commit().await.map_err(map_sqlx_error)?;
@@ -9947,8 +9796,6 @@ impl QueueStorage {
                         .into_done_row(JobState::Failed, Utc::now(), payload.into_json());
                 self.insert_done_rows_tx(&mut tx, std::slice::from_ref(&done), Some(row.state))
                     .await?;
-                self.adjust_lane_counts(&mut tx, &row.queue, row.priority, 0, 0)
-                    .await?;
                 rescued.push(done.into_job_row()?);
             } else {
                 let deferred = row.clone().into_deferred_row(
@@ -9959,8 +9806,6 @@ impl QueueStorage {
                     payload.into_json(),
                 );
                 self.insert_deferred_rows_tx(&mut tx, vec![deferred.clone()], Some(row.state))
-                    .await?;
-                self.adjust_lane_counts(&mut tx, &row.queue, row.priority, 0, 0)
                     .await?;
                 rescued.push(deferred.into_job_row()?);
             }

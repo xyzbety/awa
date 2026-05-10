@@ -116,12 +116,12 @@ export default async function globalSetup() {
       now()
     );
 
-    INSERT INTO ${queueStorageSchema}.queue_lanes (queue, priority, next_seq, claim_seq, available_count)
+    INSERT INTO ${queueStorageSchema}.queue_lanes (queue, priority, next_seq, claim_seq)
     VALUES
-      ('e2e_test', 2, 6, 2, 1),
-      ('e2e_test', 1, 2, 1, 1),
-      ('legacy_queue', 2, 2, 1, 1),
-      ('e2e_dlq', 2, 1, 1, 0);
+      ('e2e_test', 2, 6, 2),
+      ('e2e_test', 1, 2, 1),
+      ('legacy_queue', 2, 2, 1),
+      ('e2e_dlq', 2, 1, 1);
 
     -- The per-lane next_seq/claim_seq cursors live in their own
     -- tables, not in queue_lanes. The runtime's enqueue and claim

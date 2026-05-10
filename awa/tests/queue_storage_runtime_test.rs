@@ -3716,6 +3716,7 @@ async fn test_queue_storage_queue_counts_reads_legacy_lane_rollups_and_backfills
     let schema = "awa_qs_legacy_pruned_rollup";
     let store = create_store(&pool, schema).await;
 
+    // v016: queue_lanes.available_count was dropped.
     sqlx::query(&format!(
         r#"
         INSERT INTO {schema}.queue_lanes (
@@ -3723,10 +3724,9 @@ async fn test_queue_storage_queue_counts_reads_legacy_lane_rollups_and_backfills
             priority,
             next_seq,
             claim_seq,
-            available_count,
             pruned_completed_count
         )
-        VALUES ($1, 1, 1, 1, 0, 7)
+        VALUES ($1, 1, 1, 1, 7)
         ON CONFLICT (queue, priority) DO UPDATE
         SET pruned_completed_count = EXCLUDED.pruned_completed_count
         "#
@@ -3855,15 +3855,43 @@ async fn test_available_count_matches_ready_entries_scan() {
         .await
         .expect("Failed to run legacy ready_entries scan");
 
-        let counter: i64 = sqlx::query_scalar(&format!(
-            "SELECT COALESCE(sum(available_count), 0)::bigint
-             FROM {schema}.queue_lanes
-             WHERE queue = $1"
+        // v016 design note: there are now TWO available-count
+        // formulations, and they only agree when no admin DELETE has
+        // punched a gap in the ready ring between claim_seq and
+        // next_seq.
+        //
+        // - Hot-path signal (queue_claimer_signal): cheap derived
+        //   `sum(next_seq - claim_seq)`. Two PK reads per lane.
+        //   Tolerates transient over-counts after admin DELETEs of
+        //   non-head lanes — the dispatcher's gap-recovery branch
+        //   absorbs the drift on the next claim attempt.
+        // - Admin API (queue_counts): exact, via a scan over
+        //   ready_entries with `lane_seq >= claim_seq`. Same
+        //   predicate as the ground-truth scan below.
+        //
+        // The test only pins API == scan (the admin contract). The
+        // hot-path approximation is allowed to drift by the number
+        // of mid-ring deletes since the last claim against that
+        // lane.
+        let derived_approx: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(
+                sum(GREATEST(qe.next_seq - qc.claim_seq, 0)),
+                0
+            )::bigint
+             FROM {schema}.queue_enqueue_heads AS qe
+             JOIN {schema}.queue_claim_heads AS qc
+               ON qc.queue = qe.queue
+              AND qc.priority = qe.priority
+             WHERE qe.queue = $1"
         ))
         .bind(queue)
         .fetch_one(pool)
         .await
-        .expect("Failed to read queue_lanes.available_count");
+        .expect("Failed to read derived available count");
+        assert!(
+            derived_approx >= scan,
+            "[{checkpoint}] derived hot-path count must never under-count vs scan: scan={scan} derived={derived_approx}"
+        );
 
         let api = store
             .queue_counts(pool, queue)
@@ -3871,10 +3899,6 @@ async fn test_available_count_matches_ready_entries_scan() {
             .expect("Failed to call queue_counts")
             .available;
 
-        assert_eq!(
-            scan, counter,
-            "[{checkpoint}] queue_lanes.available_count drifted from ready_entries scan: scan={scan} counter={counter}"
-        );
         assert_eq!(
             scan, api,
             "[{checkpoint}] queue_counts API diverged from the legacy scan: scan={scan} api={api}"

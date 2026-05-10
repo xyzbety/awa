@@ -247,17 +247,6 @@ def _move_ready_to_failed_done(client: awa.Client, job_id: int) -> None:
             )
             FROM moved
         ),
-        lane_fix AS (
-            UPDATE {SCHEMA}.queue_lanes AS lanes
-            SET available_count = GREATEST(0, lanes.available_count - delta.moved_count)
-            FROM (
-                SELECT queue, priority, count(*)::bigint AS moved_count
-                FROM moved
-                GROUP BY queue, priority
-            ) AS delta
-            WHERE lanes.queue = delta.queue
-              AND lanes.priority = delta.priority
-        )
         INSERT INTO {SCHEMA}.done_entries (
             ready_slot, ready_generation, job_id, kind, queue, args, state,
             priority, attempt, run_lease, max_attempts, lane_seq,
