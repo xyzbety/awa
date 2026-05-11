@@ -246,7 +246,7 @@ def _move_ready_to_failed_done(client: awa.Client, job_id: int) -> None:
                 job_id, unique_key, unique_states, 'available'::awa.job_state
             )
             FROM moved
-        ),
+        )
         INSERT INTO {SCHEMA}.done_entries (
             ready_slot, ready_generation, job_id, kind, queue, args, state,
             priority, attempt, run_lease, max_attempts, lane_seq,

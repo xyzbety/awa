@@ -512,3 +512,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql
 SET search_path = pg_catalog, awa, public;
+
+INSERT INTO awa.schema_version (version, description)
+VALUES (16, 'Drop redundant queue_lanes.available_count cache; reader derives from heads')
+ON CONFLICT (version) DO NOTHING;

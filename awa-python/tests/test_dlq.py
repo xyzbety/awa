@@ -57,7 +57,7 @@ def _move_ready_to_failed_done(client: awa.Client, job_id: int) -> None:
                 'available'::awa.job_state
             )
             FROM moved
-        ),
+        )
         INSERT INTO {SCHEMA}.done_entries (
             ready_slot,
             ready_generation,
@@ -141,7 +141,7 @@ async def _move_ready_to_failed_done_async(client: awa.AsyncClient, job_id: int)
                     'available'::awa.job_state
                 )
                 FROM moved
-            ),
+            )
             INSERT INTO {SCHEMA}.done_entries (
                 ready_slot,
                 ready_generation,
