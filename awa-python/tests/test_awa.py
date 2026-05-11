@@ -327,11 +327,17 @@ async def test_enqueue_many_copy_queue_storage(client):
         """,
         queue,
     )
+    # Available count derives from queue_enqueue_heads.next_seq -
+    # queue_claim_heads.claim_seq; aliased to keep the historical
+    # `available_count` field name on the returned row.
     counts = await tx.fetch_one(
         f"""
-        SELECT available_count
-        FROM {schema}.queue_lanes
-        WHERE queue = $1 AND priority = 1
+        SELECT GREATEST(qe.next_seq - qc.claim_seq, 0) AS available_count
+        FROM {schema}.queue_enqueue_heads AS qe
+        JOIN {schema}.queue_claim_heads AS qc
+          ON qc.queue = qe.queue
+         AND qc.priority = qe.priority
+        WHERE qe.queue = $1 AND qe.priority = 1
         """,
         queue,
     )

@@ -148,13 +148,19 @@ The implementation and migrations use these physical names:
 - `lane_state` itself is reduced to stable per-lane identity and legacy
   fallback fields. The mutable enqueue cursor lives in `queue_enqueue_heads`
   and the mutable claim cursor lives in `queue_claim_heads`.
-- **historical:** the original ADR-019 design derived availability from
-  `ready_entries` plus the claim head, deliberately avoiding a hot cached
-  counter on `lane_state`. Long-horizon validation showed that scan was the
-  dispatcher hot-path bottleneck under multi-million-row backlogs; the
-  current implementation reads `sum(queue_lanes.available_count)`, which the
-  queue-storage SQL functions keep in lockstep with `ready_entries` inserts
-  and claim-head advances. `lane_state` itself remains cold.
+- Availability counts have two grades, both cheap. The dispatcher
+  hot path reads `sum(queue_enqueue_heads.next_seq -
+  queue_claim_heads.claim_seq)` — two PK reads per lane, no scan over
+  `ready_entries`. Admin / UI calls (`queue_counts`) scan
+  `ready_entries WHERE lane_seq >= claim_seq` for an exact result.
+  The dispatcher tolerates the head difference's transient over-count
+  after admin DELETEs of unclaimed rows; the next claim attempt's
+  gap-recovery branch in `claim_ready_runtime` advances `claim_seq`
+  to close the gap. **historical:** earlier iterations cached this as
+  `queue_lanes.available_count` (a third counter mutated on every
+  enqueue / claim / completion); long-horizon profiling under pinned
+  xmin showed the cache was the dominant dead-tuple source, so v016
+  removed it in favour of the head-difference derivation.
 - Completed-history rollups live in a separate cold cache table so prune can
   preserve queue counts without serializing on the hot `lane_state` rows.
 - Completion must not update `lane_state` on every terminal transition; the

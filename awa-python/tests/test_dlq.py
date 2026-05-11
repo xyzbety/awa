@@ -57,17 +57,6 @@ def _move_ready_to_failed_done(client: awa.Client, job_id: int) -> None:
                 'available'::awa.job_state
             )
             FROM moved
-        ),
-        lane_fix AS (
-            UPDATE {SCHEMA}.queue_lanes AS lanes
-            SET available_count = GREATEST(0, lanes.available_count - delta.moved_count)
-            FROM (
-                SELECT queue, priority, count(*)::bigint AS moved_count
-                FROM moved
-                GROUP BY queue, priority
-            ) AS delta
-            WHERE lanes.queue = delta.queue
-              AND lanes.priority = delta.priority
         )
         INSERT INTO {SCHEMA}.done_entries (
             ready_slot,
@@ -152,17 +141,6 @@ async def _move_ready_to_failed_done_async(client: awa.AsyncClient, job_id: int)
                     'available'::awa.job_state
                 )
                 FROM moved
-            ),
-            lane_fix AS (
-                UPDATE {SCHEMA}.queue_lanes AS lanes
-                SET available_count = GREATEST(0, lanes.available_count - delta.moved_count)
-                FROM (
-                    SELECT queue, priority, count(*)::bigint AS moved_count
-                    FROM moved
-                    GROUP BY queue, priority
-                ) AS delta
-                WHERE lanes.queue = delta.queue
-                  AND lanes.priority = delta.priority
             )
             INSERT INTO {SCHEMA}.done_entries (
                 ready_slot,
