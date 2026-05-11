@@ -5,6 +5,16 @@ transitions live in [`docs/upgrade-0.5-to-0.6.md`](docs/upgrade-0.5-to-0.6.md).
 
 ## Unreleased
 
+### Performance
+- Drop the `queue_lanes.available_count` cache (migration `v016`).
+  The dispatcher derives availability from
+  `queue_enqueue_heads.next_seq - queue_claim_heads.claim_seq` and
+  the admin API (`queue_counts`) scans `ready_entries` for an exact
+  count. Removes the queue-storage schema's largest dead-tuple
+  source under pinned-xmin workloads (long-running reader
+  transactions) without changing public API behaviour. See ADR-019
+  § `lane_state` and segment cursor tables.
+
 ## [0.6.0-alpha.9] — 2026-05-08
 
 ### Fixed
