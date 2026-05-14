@@ -120,7 +120,10 @@ thin: it surfaces the underlying `sqlx::PgPool` from
 `sea_orm::DatabaseConnection`, then reuses Awa's existing insert and
 migration helpers on that pool.
 
-The adapter lives in the optional `awa-seaorm` crate:
+The adapter lives in the optional `awa-seaorm` crate. Use the first
+pattern when you only need transactional enqueueing from SeaORM, and
+the second pattern when you want to build and run an Awa client from
+the same connection.
 
 ```toml
 [dependencies]
@@ -132,9 +135,11 @@ sea-orm = { version = "=2.0.0-rc.38", default-features = false, features = [
 ] }
 ```
 
+### Transactional enqueue
+
 ```rust
-use awa::{JobArgs, QueueConfig};
-use awa_seaorm::{client_builder, insert, migrate};
+use awa::JobArgs;
+use awa_seaorm::{insert, migrate};
 use sea_orm::Database;
 use serde::{Deserialize, Serialize};
 
@@ -149,10 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::connect(&std::env::var("DATABASE_URL")?).await?;
     migrate(&db).await?;
 
-    let _client = client_builder(&db)
-        .queue("email", QueueConfig::default())
-        .build()?;
-
     insert(
         &db,
         &SendEmail {
@@ -161,6 +162,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )
     .await?;
+
+    Ok(())
+}
+```
+
+### Client builder
+
+```rust
+use awa::{JobArgs, QueueConfig};
+use awa_seaorm::{client_builder, migrate};
+use sea_orm::Database;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, JobArgs)]
+struct SendEmail {
+    to: String,
+    subject: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db = Database::connect(&std::env::var("DATABASE_URL")?).await?;
+    migrate(&db).await?;
+
+    let client = client_builder(&db)
+        .queue("email", QueueConfig::default())
+        .build()?;
+
+    client.enqueue(SendEmail {
+        to: "ada@example.com".into(),
+        subject: "hello".into(),
+    }).await?;
+
+    client.start().await?;
 
     Ok(())
 }

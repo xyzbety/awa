@@ -28,8 +28,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 ```rust
-use awa::{JobArgs, QueueConfig};
-use awa_seaorm::{client_builder, insert, migrate, SeaOrmAwaExt};
+use awa::JobArgs;
+use awa_seaorm::{insert, migrate, SeaOrmAwaExt};
 use sea_orm::Database;
 use serde::{Deserialize, Serialize};
 
@@ -44,10 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::connect(&std::env::var("DATABASE_URL")?).await?;
 
     migrate(&db).await?;
-
-    let _client = client_builder(&db)
-        .queue("email", QueueConfig::default())
-        .build()?;
 
     let job = insert(
         &db,
