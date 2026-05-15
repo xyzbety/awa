@@ -1,14 +1,17 @@
 //! SeaORM integration helpers for Awa.
 //!
-//! This crate stays deliberately thin: it exposes the underlying
-//! `sqlx::PgPool` from a SeaORM `DatabaseConnection`, then reuses Awa's
-//! existing migration and insertion helpers on that pool.
-//!
-//! It does not add a new storage engine, and it does not replace the
-//! existing `awa` sqlx API.
+//! This crate provides a SeaORM-first repository for Awa job administration
+//! while preserving the original transactional insert helpers.
+
+pub mod entity;
+mod mapping;
+mod repo;
+mod sql;
+
+pub use repo::JobRepository;
 
 use awa::{AwaError, Client, ClientBuilder, InsertOpts, JobArgs, JobRow};
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 use sqlx::PgPool;
 
 /// Convenience methods for using a SeaORM connection with Awa.
@@ -18,6 +21,14 @@ pub trait SeaOrmAwaExt {
 
     /// Build an Awa client from the SeaORM connection's pool.
     fn awa_client_builder(&self) -> ClientBuilder;
+
+    /// Build a SeaORM job repository.
+    fn awa_jobs(&self) -> JobRepository<'_, Self>
+    where
+        Self: Sized + ConnectionTrait,
+    {
+        JobRepository::new(self)
+    }
 }
 
 impl SeaOrmAwaExt for DatabaseConnection {
@@ -45,19 +56,37 @@ pub async fn migrate(connection: &DatabaseConnection) -> Result<(), AwaError> {
     awa::migrations::run(connection.awa_pool()).await
 }
 
-/// Insert a job using Awa's existing sqlx path via the SeaORM connection pool.
-pub async fn insert(
-    connection: &DatabaseConnection,
-    args: &impl JobArgs,
-) -> Result<JobRow, AwaError> {
-    awa::insert(connection.awa_pool(), args).await
+/// Insert a job using SeaORM's connection or transaction.
+pub async fn insert<C>(connection: &C, args: &impl JobArgs) -> Result<JobRow, AwaError>
+where
+    C: ConnectionTrait,
+{
+    JobRepository::new(connection).insert(args).await
 }
 
-/// Insert a job with custom options using the SeaORM connection pool.
-pub async fn insert_with(
-    connection: &DatabaseConnection,
+/// Insert a job with custom options using SeaORM's connection or transaction.
+pub async fn insert_with<C>(
+    connection: &C,
     args: &impl JobArgs,
     opts: InsertOpts,
-) -> Result<JobRow, AwaError> {
-    awa::insert_with(connection.awa_pool(), args, opts).await
+) -> Result<JobRow, AwaError>
+where
+    C: ConnectionTrait,
+{
+    JobRepository::new(connection).insert_with(args, opts).await
+}
+
+/// Insert a job from raw kind + JSON args + options.
+pub async fn insert_raw<C>(
+    connection: &C,
+    kind: impl Into<String>,
+    args: impl Into<serde_json::Value>,
+    opts: InsertOpts,
+) -> Result<JobRow, AwaError>
+where
+    C: ConnectionTrait,
+{
+    JobRepository::new(connection)
+        .insert_raw(kind, args, opts)
+        .await
 }
