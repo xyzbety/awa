@@ -32,8 +32,8 @@ awa-worker = { path = "awa-worker", version = "0.6.0-alpha.9" }
 awa = { path = "awa", version = "0.6.0-alpha.9" }
 
 # Database
-sea-orm = { version = "=2.0.0-rc.38", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-json", "with-uuid"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate", "uuid"] }
+sea-orm = { version = "=2.0.0-rc.40", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-json", "with-uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate", "uuid"] }
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -74,7 +74,7 @@ cel = { version = "0.13", features = ["json"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Web
 axum = "0.8"
