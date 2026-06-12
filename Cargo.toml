@@ -30,7 +30,7 @@ awa-metrics = { path = "awa-metrics", version = "0.6.0-alpha.9" }
 awa-worker = { path = "awa-worker", version = "0.6.0-alpha.9" }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate", "uuid"] }
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
