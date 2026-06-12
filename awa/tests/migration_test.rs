@@ -185,10 +185,12 @@ async fn simulate_non_canonical_compat_routing(pool: &PgPool) {
 }
 
 async fn install_queue_storage_backend(pool: &PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        .execute(pool)
-        .await
-        .expect("queue storage test schema should drop cleanly");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP SCHEMA IF EXISTS {schema} CASCADE"
+    )))
+    .execute(pool)
+    .await
+    .expect("queue storage test schema should drop cleanly");
 
     let store =
         QueueStorage::from_existing_schema(schema).expect("queue storage schema should validate");
@@ -199,10 +201,12 @@ async fn install_queue_storage_backend(pool: &PgPool, schema: &str) {
 }
 
 async fn prepare_queue_storage_schema(pool: &PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        .execute(pool)
-        .await
-        .expect("queue storage test schema should drop cleanly");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP SCHEMA IF EXISTS {schema} CASCADE"
+    )))
+    .execute(pool)
+    .await
+    .expect("queue storage test schema should drop cleanly");
 
     let store =
         QueueStorage::from_existing_schema(schema).expect("queue storage schema should validate");
@@ -229,13 +233,15 @@ fn assert_safe_generated_role_name(role: &str) {
 
 async fn create_login_role(pool: &PgPool, role: &str) {
     assert_safe_generated_role_name(role);
-    sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
-        .execute(pool)
-        .await
-        .expect("test role should be dropped before create");
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP ROLE IF EXISTS {role}"
+    )))
+    .execute(pool)
+    .await
+    .expect("test role should be dropped before create");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "CREATE ROLE {role} LOGIN PASSWORD 'awa_test_password'"
-    ))
+    )))
     .execute(pool)
     .await
     .expect("test role should be created");
@@ -243,9 +249,11 @@ async fn create_login_role(pool: &PgPool, role: &str) {
 
 async fn drop_login_role(pool: &PgPool, role: &str) {
     assert_safe_generated_role_name(role);
-    let _ = sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
-        .execute(pool)
-        .await;
+    let _ = sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP ROLE IF EXISTS {role}"
+    )))
+    .execute(pool)
+    .await;
 }
 
 async fn grant_runtime_privileges(pool: &PgPool, role: &str, include_truncate: bool) {
@@ -255,7 +263,7 @@ async fn grant_runtime_privileges(pool: &PgPool, role: &str, include_truncate: b
     } else {
         "SELECT, INSERT, UPDATE, DELETE"
     };
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(format!(
         r#"
         GRANT CONNECT ON DATABASE awa_migration_test TO {role};
         GRANT USAGE ON SCHEMA awa TO {role};
@@ -263,7 +271,7 @@ async fn grant_runtime_privileges(pool: &PgPool, role: &str, include_truncate: b
         GRANT {table_privileges} ON ALL TABLES IN SCHEMA awa TO {role};
         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA awa TO {role};
         "#
-    ))
+    )))
     .execute(pool)
     .await
     .expect("runtime grants should apply");
@@ -438,7 +446,10 @@ async fn test_step_through_upgrade_preserves_data() {
     let v1_sql = migrations::migration_sql();
     let (v1_version, _, v1_up) = &v1_sql[0];
     assert_eq!(*v1_version, 1);
-    sqlx::raw_sql(v1_up).execute(&pool).await.unwrap();
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(v1_up.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let version = migrations::current_version(&pool).await.unwrap();
     assert_eq!(version, 1);
@@ -566,7 +577,10 @@ async fn test_migration_sql_matches_run() {
 
     reset_schema(&pool).await;
     for (_version, _desc, sql) in migrations::migration_sql() {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(awa_model::sql_safety::audited_sql(sql.clone()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     let tables_from_sql: Vec<String> = sqlx::query_scalar(
@@ -593,7 +607,10 @@ async fn test_legacy_version_upgrade() {
     reset_schema(&pool).await;
 
     let v1_sql = &migrations::migration_sql()[0].2;
-    sqlx::raw_sql(v1_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(v1_sql.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::raw_sql(
         r#"
@@ -607,8 +624,14 @@ async fn test_legacy_version_upgrade() {
 
     let v2_sql = &migrations::migration_sql()[1].2;
     let v3_sql = &migrations::migration_sql()[2].2;
-    sqlx::raw_sql(v2_sql).execute(&pool).await.unwrap();
-    sqlx::raw_sql(v3_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(v2_sql.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(v3_sql.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::raw_sql(
         r#"
@@ -666,7 +689,10 @@ async fn test_migration_sql_range_produces_valid_schema() {
 
     // Apply only V1+V2 via range, then verify V2 artifacts exist but V3+ don't.
     for (_version, _desc, sql) in migrations::migration_sql_range(0, 2) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(awa_model::sql_safety::audited_sql(sql.clone()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     let has_runtime: bool = sqlx::query_scalar(
@@ -687,7 +713,10 @@ async fn test_migration_sql_range_produces_valid_schema() {
 
     // Now apply V3+V4 via range and verify.
     for (_version, _desc, sql) in migrations::migration_sql_range(2, migrations::CURRENT_VERSION) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(awa_model::sql_safety::audited_sql(sql.clone()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     let has_maintenance: bool = sqlx::query_scalar(
@@ -1788,7 +1817,10 @@ async fn test_legacy_v3_only_upgrade() {
     reset_schema(&pool).await;
 
     let v1_sql = &migrations::migration_sql()[0].2;
-    sqlx::raw_sql(v1_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(awa_model::sql_safety::audited_sql(v1_sql.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::raw_sql(
         r#"

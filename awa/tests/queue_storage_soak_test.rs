@@ -72,7 +72,10 @@ async fn ensure_database_exists(url: &str) {
         .await
         .expect("Failed to connect to admin database for queue_storage soak tests");
     let create_sql = format!("CREATE DATABASE {database_name}");
-    match sqlx::query(&create_sql).execute(&admin_pool).await {
+    match sqlx::query(awa_model::sql_safety::audited_sql(create_sql.clone()))
+        .execute(&admin_pool)
+        .await
+    {
         Ok(_) => {}
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
         Err(err) => {
@@ -115,7 +118,7 @@ async fn ensure_pgstattuple(pool: &sqlx::PgPool) {
 
 async fn recreate_store_schema(pool: &sqlx::PgPool, store: &QueueStorage) {
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-    sqlx::query(&drop_sql)
+    sqlx::query(awa_model::sql_safety::audited_sql(drop_sql.clone()))
         .execute(pool)
         .await
         .expect("Failed to drop queue_storage soak schema");
@@ -253,7 +256,7 @@ async fn attempt_state_count(pool: &sqlx::PgPool, store: &QueueStorage) -> i64 {
         "SELECT count(*)::bigint FROM {}.attempt_state",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count attempt_state rows")
@@ -264,7 +267,7 @@ async fn dlq_depth(pool: &sqlx::PgPool, store: &QueueStorage, queue: &str) -> i6
         "SELECT count(*)::bigint FROM {}.dlq_entries WHERE queue = $1",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .bind(queue)
         .fetch_one(pool)
         .await
@@ -276,7 +279,7 @@ async fn queue_storage_done_count(pool: &sqlx::PgPool, store: &QueueStorage, que
         "SELECT count(*)::bigint FROM {}.done_entries WHERE queue = $1 AND state = 'completed'",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .bind(queue)
         .fetch_one(pool)
         .await

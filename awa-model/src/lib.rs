@@ -9,6 +9,8 @@ pub mod job;
 pub mod kind;
 pub mod migrations;
 pub mod queue_storage;
+#[doc(hidden)]
+pub mod sql_safety;
 pub mod storage;
 pub mod unique;
 

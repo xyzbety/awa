@@ -4,6 +4,7 @@ use crate::storage::RuntimeStorage;
 use awa_model::cron::{
     atomic_enqueue, list_cron_jobs, upsert_cron_job, CronJobRow, CronMissedFirePolicy,
 };
+use awa_model::sql_safety::audited_sql;
 use awa_model::{JobRow, JobState, PeriodicJob, PruneOutcome, RotateOutcome};
 use chrono::Utc;
 use croner::Cron;
@@ -1016,7 +1017,7 @@ impl MaintenanceService {
         let mut tx = self.pool.begin().await?;
         let promote_start = std::time::Instant::now();
         let sql = Self::promote_sql(state);
-        let promoted_rows: Vec<(String,)> = sqlx::query_as(&sql)
+        let promoted_rows: Vec<(String,)> = sqlx::query_as(audited_sql(sql.clone()))
             .bind(PROMOTE_BATCH_SIZE)
             .fetch_all(&mut *tx)
             .await?;
@@ -1351,7 +1352,7 @@ impl MaintenanceService {
         let retention_secs = i64::try_from(self.dlq_retention.as_secs()).unwrap_or(i64::MAX);
 
         let global_result = if override_queues.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -1360,13 +1361,13 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .execute(&self.pool)
             .await
         } else {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -1376,7 +1377,7 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .bind(&override_queues)
@@ -1399,7 +1400,7 @@ impl MaintenanceService {
                 continue;
             };
             let retention_secs = i64::try_from(retention.as_secs()).unwrap_or(i64::MAX);
-            match sqlx::query(&format!(
+            match sqlx::query(audited_sql(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -1409,7 +1410,7 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .bind(queue)
@@ -1703,7 +1704,7 @@ impl MaintenanceService {
         runtime: &crate::storage::QueueStorageRuntime,
     ) {
         let schema = runtime.store.schema();
-        let rows: Vec<QueueStorageMetricRow> = match sqlx::query_as(&format!(
+        let rows: Vec<QueueStorageMetricRow> = match sqlx::query_as(audited_sql(format!(
             r#"
             WITH queues AS (
                 SELECT DISTINCT queue
@@ -1784,7 +1785,7 @@ impl MaintenanceService {
               ON dlq.queue = queues.queue
             ORDER BY queues.queue
             "#
-        ))
+        )))
         .fetch_all(&self.pool)
         .await
         {

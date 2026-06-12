@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use awa_model::sql_safety::audited_sql;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use sqlx::postgres::PgPoolOptions;
@@ -725,9 +726,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ..Default::default()
                         })?;
                         if reset {
-                            sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                                .execute(&pool)
-                                .await?;
+                            sqlx::query(audited_sql(format!(
+                                "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                            )))
+                            .execute(&pool)
+                            .await?;
                         }
                         store.prepare_schema(&pool).await?;
                         println!(

@@ -2,6 +2,7 @@ use crate::dlq::DlqMetadata;
 use crate::error::AwaError;
 use crate::job::{JobRow, JobState};
 use crate::queue_storage::QueueStorage;
+use crate::sql_safety::audited_sql;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
@@ -354,7 +355,7 @@ async fn list_queue_storage_jobs(
     let mut cursor = filter.before_id;
 
     loop {
-        let ids: Vec<i64> = sqlx::query_scalar(&sql)
+        let ids: Vec<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
             .bind(filter.state)
             .bind(&filter.kind)
             .bind(&filter.queue)
@@ -566,7 +567,7 @@ pub async fn cancel_by_unique_key(
             schema = store.schema()
         );
 
-        let candidate: Option<i64> = sqlx::query_scalar(&sql)
+        let candidate: Option<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
             .bind(&unique_key)
             .fetch_optional(pool)
             .await?;
@@ -622,7 +623,10 @@ pub async fn retry_failed_by_kind(pool: &PgPool, kind: &str) -> Result<Vec<JobRo
             "#,
             schema = store.schema()
         );
-        let ids: Vec<i64> = sqlx::query_scalar(&sql).bind(kind).fetch_all(pool).await?;
+        let ids: Vec<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
+            .bind(kind)
+            .fetch_all(pool)
+            .await?;
         return store.retry_jobs_by_ids(pool, &ids).await;
     }
 
@@ -655,7 +659,10 @@ pub async fn retry_failed_by_queue(pool: &PgPool, queue: &str) -> Result<Vec<Job
             "#,
             schema = store.schema()
         );
-        let ids: Vec<i64> = sqlx::query_scalar(&sql).bind(queue).fetch_all(pool).await?;
+        let ids: Vec<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
+            .bind(queue)
+            .fetch_all(pool)
+            .await?;
         return store.retry_jobs_by_ids(pool, &ids).await;
     }
 
@@ -738,7 +745,10 @@ pub async fn drain_queue(pool: &PgPool, queue: &str) -> Result<u64, AwaError> {
              ORDER BY job_id ASC",
             queue_storage_current_jobs_cte(store.schema())
         );
-        let ids: Vec<i64> = sqlx::query_scalar(&sql).bind(queue).fetch_all(pool).await?;
+        let ids: Vec<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
+            .bind(queue)
+            .fetch_all(pool)
+            .await?;
         return store
             .cancel_jobs_by_ids(pool, &ids)
             .await
@@ -907,7 +917,7 @@ pub async fn sync_queue_descriptors(
             .map(|named| named.descriptor.descriptor_hash())
             .collect();
         let sql = build_descriptor_upsert("awa.queue_descriptors", "queue", chunk.len());
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(audited_sql(sql.clone()));
         for (named, hash) in chunk.iter().zip(hashes.iter()) {
             query = query
                 .bind(&named.queue)
@@ -944,7 +954,7 @@ pub async fn sync_job_kind_descriptors(
             .map(|named| named.descriptor.descriptor_hash())
             .collect();
         let sql = build_descriptor_upsert("awa.job_kind_descriptors", "kind", chunk.len());
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(audited_sql(sql.clone()));
         for (named, hash) in chunk.iter().zip(hashes.iter()) {
             query = query
                 .bind(&named.kind)
@@ -1584,7 +1594,10 @@ where
     // Table name is an authenticated literal from the match above — safe
     // to interpolate into the statement.
     let sql = format!("DELETE FROM {table} WHERE last_seen_at < now() - make_interval(secs => $1)");
-    let result = sqlx::query(&sql).bind(seconds).execute(executor).await?;
+    let result = sqlx::query(audited_sql(sql.clone()))
+        .bind(seconds)
+        .execute(executor)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -1834,7 +1847,7 @@ pub async fn queue_overviews(pool: &PgPool) -> Result<Vec<QueueOverview>, AwaErr
             current_jobs_cte = queue_storage_current_jobs_cte(store.schema())
         );
 
-        let rows = sqlx::query_as::<_, QueueOverview>(&sql)
+        let rows = sqlx::query_as::<_, QueueOverview>(audited_sql(sql.clone()))
             .fetch_all(pool)
             .await?;
         return Ok(rows);
@@ -2309,7 +2322,9 @@ pub async fn state_counts(pool: &PgPool) -> Result<HashMap<JobState, i64>, AwaEr
             failed,
             cancelled,
             waiting_external,
-        ): (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(&sql).fetch_one(pool).await?;
+        ): (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(audited_sql(sql.clone()))
+            .fetch_one(pool)
+            .await?;
 
         return Ok(HashMap::from([
             (JobState::Scheduled, scheduled),
@@ -2429,7 +2444,7 @@ pub async fn job_kind_overviews(pool: &PgPool) -> Result<Vec<JobKindOverview>, A
             current_jobs_cte = queue_storage_current_jobs_cte(store.schema())
         );
 
-        let rows = sqlx::query_as::<_, JobKindOverview>(&sql)
+        let rows = sqlx::query_as::<_, JobKindOverview>(audited_sql(sql.clone()))
             .fetch_all(pool)
             .await?;
         return Ok(rows);
@@ -2540,7 +2555,7 @@ pub async fn distinct_kinds(pool: &PgPool) -> Result<Vec<String>, AwaError> {
              ORDER BY kind",
             queue_storage_current_jobs_cte(store.schema())
         );
-        return sqlx::query_scalar(&sql)
+        return sqlx::query_scalar(audited_sql(sql.clone()))
             .fetch_all(pool)
             .await
             .map_err(AwaError::from);
@@ -2567,7 +2582,7 @@ pub async fn distinct_queues(pool: &PgPool) -> Result<Vec<String>, AwaError> {
              ORDER BY queue",
             queue_storage_current_jobs_cte(store.schema())
         );
-        return sqlx::query_scalar(&sql)
+        return sqlx::query_scalar(audited_sql(sql.clone()))
             .fetch_all(pool)
             .await
             .map_err(AwaError::from);
@@ -2710,10 +2725,12 @@ pub async fn state_timeseries(
              ORDER BY bucket",
             queue_storage_current_jobs_cte(store.schema())
         );
-        let rows = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, JobState, i64)>(&sql)
-            .bind(minutes)
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, JobState, i64)>(
+            audited_sql(sql.clone()),
+        )
+        .bind(minutes)
+        .fetch_all(pool)
+        .await?;
 
         return Ok(rows
             .into_iter()

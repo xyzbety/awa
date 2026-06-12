@@ -119,7 +119,10 @@ async fn ensure_database_exists(url: &str) {
         .await
         .expect("Failed to connect to admin database for queue_storage tests");
     let create_sql = format!("CREATE DATABASE {database_name}");
-    match sqlx::query(&create_sql).execute(&admin_pool).await {
+    match sqlx::query(awa_model::sql_safety::audited_sql(create_sql.clone()))
+        .execute(&admin_pool)
+        .await
+    {
         Ok(_) => {}
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
         Err(err) => panic!("Failed to create queue_storage test database {database_name}: {err}"),
@@ -178,7 +181,7 @@ async fn setup_pool(max_connections: u32) -> sqlx::PgPool {
 
 async fn recreate_store_schema(pool: &sqlx::PgPool, store: &QueueStorage) {
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-    sqlx::query(&drop_sql)
+    sqlx::query(awa_model::sql_safety::audited_sql(drop_sql.clone()))
         .execute(pool)
         .await
         .expect("Failed to drop queue_storage schema");
@@ -362,7 +365,7 @@ async fn attempt_state_count(pool: &sqlx::PgPool, store: &QueueStorage) -> i64 {
         "SELECT count(*)::bigint FROM {}.attempt_state",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count attempt_state rows")
@@ -370,7 +373,7 @@ async fn attempt_state_count(pool: &sqlx::PgPool, store: &QueueStorage) -> i64 {
 
 async fn lease_count(pool: &sqlx::PgPool, store: &QueueStorage) -> i64 {
     let sql = format!("SELECT count(*)::bigint FROM {}.leases", store.schema());
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count leases")
@@ -381,7 +384,7 @@ async fn lease_claim_count(pool: &sqlx::PgPool, store: &QueueStorage) -> i64 {
         "SELECT count(*)::bigint FROM {}.lease_claims",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count lease_claims")
@@ -412,7 +415,7 @@ async fn open_receipt_claim_count(pool: &sqlx::PgPool, store: &QueueStorage) -> 
         )
         "#,
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count open receipt claims (derived)")
@@ -423,7 +426,7 @@ async fn lease_claim_closure_count(pool: &sqlx::PgPool, store: &QueueStorage) ->
         "SELECT count(*)::bigint FROM {}.lease_claim_closures",
         store.schema()
     );
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
         .fetch_one(pool)
         .await
         .expect("Failed to count lease_claim_closures")
@@ -504,7 +507,7 @@ async fn enqueue_job<T: JobArgs>(
         )
     };
 
-    sqlx::query_scalar::<_, i64>(&query)
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(query.clone()))
         .bind(&queue_names)
         .fetch_one(pool)
         .await
@@ -572,10 +575,10 @@ async fn wait_for_callback_job(
 }
 
 async fn dlq_count(pool: &sqlx::PgPool, store: &QueueStorage, queue: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!(
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.dlq_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(pool)
     .await
@@ -583,10 +586,10 @@ async fn dlq_count(pool: &sqlx::PgPool, store: &QueueStorage, queue: &str) -> i6
 }
 
 async fn failed_done_count(pool: &sqlx::PgPool, store: &QueueStorage, queue: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!(
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.done_entries WHERE queue = $1 AND state = 'failed'",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(pool)
     .await
@@ -644,10 +647,10 @@ async fn wait_for_failed_done_count(
 }
 
 async fn completed_done_count(pool: &sqlx::PgPool, store: &QueueStorage, queue: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!(
+    sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.done_entries WHERE queue = $1 AND state = 'completed'",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(pool)
     .await
@@ -655,10 +658,10 @@ async fn completed_done_count(pool: &sqlx::PgPool, store: &QueueStorage, queue: 
 }
 
 async fn dlq_reason(pool: &sqlx::PgPool, store: &QueueStorage, job_id: i64) -> String {
-    sqlx::query_scalar::<_, String>(&format!(
+    sqlx::query_scalar::<_, String>(awa_model::sql_safety::audited_sql(format!(
         "SELECT dlq_reason FROM {}.dlq_entries WHERE job_id = $1 ORDER BY dlq_at DESC LIMIT 1",
         store.schema()
-    ))
+    )))
     .bind(job_id)
     .fetch_one(pool)
     .await
@@ -993,19 +996,20 @@ async fn test_claim_ring_rotates_and_prunes_empty() {
     .await;
 
     // Seeded state: current_slot = 0, generation = 0, slot_count = 4.
-    let (initial_slot, initial_gen, initial_count): (i32, i64, i32) = sqlx::query_as(&format!(
+    let (initial_slot, initial_gen, initial_count): (i32, i64, i32) =
+        sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT current_slot, generation, slot_count FROM {schema}.claim_ring_state WHERE singleton"
-    ))
-    .fetch_one(&pool)
-    .await
-    .expect("read initial claim ring state");
+    )))
+        .fetch_one(&pool)
+        .await
+        .expect("read initial claim ring state");
     assert_eq!(initial_slot, 0);
     assert_eq!(initial_gen, 0);
     assert_eq!(initial_count, 4);
 
-    let slot_rows: Vec<(i32, i64)> = sqlx::query_as(&format!(
+    let slot_rows: Vec<(i32, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT slot, generation FROM {schema}.claim_ring_slots ORDER BY slot"
-    ))
+    )))
     .fetch_all(&pool)
     .await
     .expect("read initial claim ring slot rows");
@@ -1050,18 +1054,19 @@ async fn test_claim_ring_rotates_and_prunes_empty() {
     // reset() re-seeds the ring to the initial shape — claim_ring_state
     // back to (0, 0, N), claim_ring_slots back to one-open-rest-uninit.
     store.reset(&pool).await.expect("reset should succeed");
-    let (reset_slot, reset_gen, reset_count): (i32, i64, i32) = sqlx::query_as(&format!(
+    let (reset_slot, reset_gen, reset_count): (i32, i64, i32) =
+        sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT current_slot, generation, slot_count FROM {schema}.claim_ring_state WHERE singleton"
-    ))
-    .fetch_one(&pool)
-    .await
-    .expect("read claim ring state after reset");
+    )))
+        .fetch_one(&pool)
+        .await
+        .expect("read claim ring state after reset");
     assert_eq!(reset_slot, 0);
     assert_eq!(reset_gen, 0);
     assert_eq!(reset_count, 4);
 
-    let post_reset_rows: Vec<(i32, i64)> = sqlx::query_as(&format!(
-        "SELECT slot, generation FROM {schema}.claim_ring_slots ORDER BY slot"
+    let post_reset_rows: Vec<(i32, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(
+        format!("SELECT slot, generation FROM {schema}.claim_ring_slots ORDER BY slot"),
     ))
     .fetch_all(&pool)
     .await
@@ -1156,14 +1161,15 @@ async fn test_claim_ring_rotate_and_prune_under_load() {
     client.shutdown(Duration::from_secs(5)).await;
 
     // Sanity: one claim + one closure both landed in slot 0.
-    let slot0_claims: i64 =
-        sqlx::query_scalar(&format!("SELECT count(*) FROM {schema}.lease_claims_0"))
-            .fetch_one(&pool)
-            .await
-            .expect("count lease_claims_0");
-    let slot0_closures: i64 = sqlx::query_scalar(&format!(
+    let slot0_claims: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+        "SELECT count(*) FROM {schema}.lease_claims_0"
+    )))
+    .fetch_one(&pool)
+    .await
+    .expect("count lease_claims_0");
+    let slot0_closures: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claim_closures_0"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count lease_claim_closures_0");
@@ -1231,14 +1237,15 @@ async fn test_claim_ring_rotate_and_prune_under_load() {
     }
 
     // Both children of slot 0 are now empty.
-    let post_prune_claims: i64 =
-        sqlx::query_scalar(&format!("SELECT count(*) FROM {schema}.lease_claims_0"))
-            .fetch_one(&pool)
-            .await
-            .expect("count lease_claims_0 after prune");
-    let post_prune_closures: i64 = sqlx::query_scalar(&format!(
+    let post_prune_claims: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+        "SELECT count(*) FROM {schema}.lease_claims_0"
+    )))
+    .fetch_one(&pool)
+    .await
+    .expect("count lease_claims_0 after prune");
+    let post_prune_closures: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claim_closures_0"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count lease_claim_closures_0 after prune");
@@ -1285,14 +1292,14 @@ async fn test_prune_oldest_claims_refuses_to_truncate_open_claim() {
     .await;
 
     // Synthesize an open claim in slot 0 without a matching closure.
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         r#"
         INSERT INTO {schema}.lease_claims (
             claim_slot, job_id, run_lease, ready_slot, ready_generation,
             queue, priority, attempt, max_attempts, lane_seq
         ) VALUES (0, 999, 1, 0, 0, 'synthetic', 2, 1, 25, 999)
         "#
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("seed open claim");
@@ -1315,9 +1322,9 @@ async fn test_prune_oldest_claims_refuses_to_truncate_open_claim() {
     );
 
     // The claim is still there — not lost.
-    let survived: i64 = sqlx::query_scalar(&format!(
+    let survived: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claims_0 WHERE job_id = 999"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count survivor");
@@ -1582,9 +1589,9 @@ async fn test_lease_claim_partition_routing() {
             .await
             .expect("rotate_claims should succeed");
     }
-    let current_slot: i32 = sqlx::query_scalar(&format!(
+    let current_slot: i32 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT current_slot FROM {schema}.claim_ring_state WHERE singleton"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("read current claim slot");
@@ -1630,18 +1637,18 @@ async fn test_lease_claim_partition_routing() {
 
     // Assert claim and closure both live in claim_slot = 2, and in the
     // matching physical child partition.
-    let claim_slot: i32 = sqlx::query_scalar(&format!(
+    let claim_slot: i32 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT claim_slot FROM {schema}.lease_claims WHERE job_id = $1 ORDER BY run_lease DESC LIMIT 1"
-    ))
+    )))
     .bind(job_id)
     .fetch_one(&pool)
     .await
     .expect("read claim_slot from lease_claims");
     assert_eq!(claim_slot, 2, "claim row should land in current slot");
 
-    let closure_slot: i32 = sqlx::query_scalar(&format!(
+    let closure_slot: i32 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT claim_slot FROM {schema}.lease_claim_closures WHERE job_id = $1 ORDER BY closed_at DESC LIMIT 1"
-    ))
+    )))
     .bind(job_id)
     .fetch_one(&pool)
     .await
@@ -1652,18 +1659,18 @@ async fn test_lease_claim_partition_routing() {
     );
 
     // Physically: both rows must be addressable via their child-partition names.
-    let claim_in_child: i64 = sqlx::query_scalar(&format!(
+    let claim_in_child: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claims_2 WHERE job_id = $1"
-    ))
+    )))
     .bind(job_id)
     .fetch_one(&pool)
     .await
     .expect("count in lease_claims_2");
     assert!(claim_in_child >= 1, "claim row must be in lease_claims_2");
 
-    let closure_in_child: i64 = sqlx::query_scalar(&format!(
+    let closure_in_child: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claim_closures_2 WHERE job_id = $1"
-    ))
+    )))
     .bind(job_id)
     .fetch_one(&pool)
     .await
@@ -1768,9 +1775,9 @@ async fn test_lease_claim_rotation_isolation() {
 
     // Job A is still exactly where it was written — rotation didn't
     // mutate existing rows.
-    let job_a_slot_still: i32 = sqlx::query_scalar(&format!(
+    let job_a_slot_still: i32 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT claim_slot FROM {schema}.lease_claims WHERE job_id = $1 LIMIT 1"
-    ))
+    )))
     .bind(job_a)
     .fetch_one(&pool)
     .await
@@ -1800,9 +1807,9 @@ async fn test_legacy_zero_deadline_claim_conversion_error_rolls_back() {
     )
     .await;
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.ready_entries SET payload = '{{\"metadata\":\"bad\"}}'::jsonb WHERE job_id = $1"
-    ))
+    )))
     .bind(job_id)
     .execute(&pool)
     .await
@@ -1818,9 +1825,9 @@ async fn test_legacy_zero_deadline_claim_conversion_error_rolls_back() {
         "failed conversion must not leave an unrescueable legacy zero-deadline lease"
     );
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.ready_entries SET payload = '{{}}'::jsonb WHERE job_id = $1"
-    ))
+    )))
     .bind(job_id)
     .execute(&pool)
     .await
@@ -1847,18 +1854,22 @@ async fn test_lease_claim_migration_preserves_rows() {
     let _guard = QUEUE_STORAGE_RUNTIME_LOCK.lock().await;
     let pool = setup_pool(4).await;
     let schema = "awa_qs_claim_migration";
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        .execute(&pool)
-        .await
-        .expect("drop schema");
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
-        .execute(&pool)
-        .await
-        .expect("create schema");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP SCHEMA IF EXISTS {schema} CASCADE"
+    )))
+    .execute(&pool)
+    .await
+    .expect("drop schema");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "CREATE SCHEMA {schema}"
+    )))
+    .execute(&pool)
+    .await
+    .expect("create schema");
 
     // Stand up the legacy regular-table shape so the migration path
     // runs on `prepare_schema`.
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         r#"
         CREATE TABLE {schema}.lease_claims (
             job_id BIGINT NOT NULL,
@@ -1875,12 +1886,12 @@ async fn test_lease_claim_migration_preserves_rows() {
             PRIMARY KEY (job_id, run_lease)
         )
         "#
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("legacy lease_claims");
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         r#"
         CREATE TABLE {schema}.lease_claim_closures (
             job_id BIGINT NOT NULL,
@@ -1890,33 +1901,33 @@ async fn test_lease_claim_migration_preserves_rows() {
             PRIMARY KEY (job_id, run_lease)
         )
         "#
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("legacy lease_claim_closures");
 
     for job_id in 1..=5_i64 {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             r#"
             INSERT INTO {schema}.lease_claims
                 (job_id, run_lease, ready_slot, ready_generation, queue,
                  priority, attempt, max_attempts, lane_seq, claimed_at, materialized_at)
             VALUES ($1, 1, 0, 0, 'legacy', 2, 1, 25, $1, now(), NULL)
             "#
-        ))
+        )))
         .bind(job_id)
         .execute(&pool)
         .await
         .expect("seed lease_claims row");
     }
     for job_id in [1_i64, 2] {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             r#"
             INSERT INTO {schema}.lease_claim_closures
                 (job_id, run_lease, outcome, closed_at)
             VALUES ($1, 1, 'completed', now())
             "#
-        ))
+        )))
         .bind(job_id)
         .execute(&pool)
         .await
@@ -1981,16 +1992,16 @@ async fn test_lease_claim_migration_preserves_rows() {
     }
 
     // All pre-existing rows landed in current claim_slot.
-    let current_slot: i32 = sqlx::query_scalar(&format!(
+    let current_slot: i32 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT current_slot FROM {schema}.claim_ring_state WHERE singleton"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("read current slot");
 
-    let claims_count: i64 = sqlx::query_scalar(&format!(
+    let claims_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claims WHERE claim_slot = $1"
-    ))
+    )))
     .bind(current_slot)
     .fetch_one(&pool)
     .await
@@ -2000,9 +2011,9 @@ async fn test_lease_claim_migration_preserves_rows() {
         "all 5 legacy claim rows must migrate into current_slot"
     );
 
-    let closures_count: i64 = sqlx::query_scalar(&format!(
+    let closures_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {schema}.lease_claim_closures WHERE claim_slot = $1"
-    ))
+    )))
     .bind(current_slot)
     .fetch_one(&pool)
     .await
@@ -2019,11 +2030,12 @@ async fn test_lease_claim_migration_preserves_rows() {
         .await
         .expect("prepare_schema idempotent after migration");
 
-    let claims_count_after: i64 =
-        sqlx::query_scalar(&format!("SELECT count(*) FROM {schema}.lease_claims"))
-            .fetch_one(&pool)
-            .await
-            .expect("count claims after idempotent call");
+    let claims_count_after: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+        "SELECT count(*) FROM {schema}.lease_claims"
+    )))
+    .fetch_one(&pool)
+    .await
+    .expect("count claims after idempotent call");
     assert_eq!(
         claims_count_after, 5,
         "idempotent prepare must not duplicate"
@@ -2899,24 +2911,25 @@ async fn test_queue_storage_receipt_deadline_rescue_force_closes_expired_claim()
     );
 
     // Verify deadline_at landed on lease_claims.
-    let deadline_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(&format!(
-        "SELECT deadline_at FROM {schema}.lease_claims WHERE job_id = $1 AND run_lease = $2"
-    ))
-    .bind(job_id)
-    .bind(claimed[0].job.run_lease)
-    .fetch_one(&pool)
-    .await
-    .expect("lease_claims row should exist");
+    let deadline_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+            "SELECT deadline_at FROM {schema}.lease_claims WHERE job_id = $1 AND run_lease = $2"
+        )))
+        .bind(job_id)
+        .bind(claimed[0].job.run_lease)
+        .fetch_one(&pool)
+        .await
+        .expect("lease_claims row should exist");
     assert!(
         deadline_at.is_some(),
         "deadline_at must be set on the claim when deadline_duration > 0"
     );
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.lease_claims \
          SET deadline_at = clock_timestamp() - interval '1 millisecond' \
          WHERE job_id = $1 AND run_lease = $2"
-    ))
+    )))
     .bind(job_id)
     .bind(claimed[0].job.run_lease)
     .execute(&pool)
@@ -2931,10 +2944,10 @@ async fn test_queue_storage_receipt_deadline_rescue_force_closes_expired_claim()
     assert_eq!(rescued[0].id, job_id);
 
     // Closure is recorded with outcome='deadline_expired'.
-    let outcome: String = sqlx::query_scalar(&format!(
+    let outcome: String = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT outcome FROM {schema}.lease_claim_closures \
          WHERE job_id = $1 AND run_lease = $2"
-    ))
+    )))
     .bind(job_id)
     .bind(claimed[0].job.run_lease)
     .fetch_one(&pool)
@@ -3851,9 +3864,9 @@ async fn test_queue_storage_prune_pending_ready_match_is_scoped_by_enqueue_shard
     )
     .await;
 
-    let ready_heads: Vec<(i16, i64)> = sqlx::query_as(&format!(
+    let ready_heads: Vec<(i16, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT enqueue_shard, lane_seq FROM {schema}.ready_entries WHERE queue = $1 ORDER BY enqueue_shard"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -3921,7 +3934,7 @@ async fn test_queue_storage_queue_counts_reads_legacy_lane_rollups_and_backfills
     let schema = "awa_qs_legacy_pruned_rollup";
     let store = create_store(&pool, schema).await;
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         r#"
         INSERT INTO {schema}.queue_lanes (
             queue,
@@ -3934,7 +3947,7 @@ async fn test_queue_storage_queue_counts_reads_legacy_lane_rollups_and_backfills
         ON CONFLICT (queue, priority) DO UPDATE
         SET pruned_completed_count = EXCLUDED.pruned_completed_count
         "#
-    ))
+    )))
     .bind(queue)
     .execute(&pool)
     .await
@@ -3951,18 +3964,18 @@ async fn test_queue_storage_queue_counts_reads_legacy_lane_rollups_and_backfills
         .await
         .expect("Failed to rerun queue storage schema preparation");
 
-    let legacy_lane_rollup: i64 = sqlx::query_scalar(&format!(
+    let legacy_lane_rollup: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT pruned_completed_count FROM {schema}.queue_lanes WHERE queue = $1 AND priority = 1"
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("Failed to read legacy lane rollup after backfill");
     assert_eq!(legacy_lane_rollup, 0);
 
-    let cold_rollup: i64 = sqlx::query_scalar(&format!(
+    let cold_rollup: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT pruned_completed_count FROM {schema}.queue_terminal_rollups WHERE queue = $1 AND priority = 1"
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -4050,7 +4063,7 @@ async fn test_available_count_matches_ready_entries_scan() {
     ) {
         let schema = store.schema();
         // Ground-truth scan — the predicate the original CTE used.
-        let scan: i64 = sqlx::query_scalar(&format!(
+        let scan: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
             "SELECT count(*)::bigint
              FROM {schema}.ready_entries AS ready
              JOIN {schema}.queue_claim_heads AS claims
@@ -4058,7 +4071,7 @@ async fn test_available_count_matches_ready_entries_scan() {
               AND claims.priority = ready.priority
              WHERE ready.queue = $1
                AND ready.lane_seq >= claims.claim_seq"
-        ))
+        )))
         .bind(queue)
         .fetch_one(pool)
         .await
@@ -4081,7 +4094,7 @@ async fn test_available_count_matches_ready_entries_scan() {
         // asserts a never-undercount invariant on the hot-path
         // approximation, which is allowed to drift up by the number
         // of mid-ring deletes since the last claim on that lane.
-        let derived_approx: i64 = sqlx::query_scalar(&format!(
+        let derived_approx: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
             "SELECT COALESCE(
                 sum(GREATEST(qe.next_seq - qc.claim_seq, 0)),
                 0
@@ -4091,7 +4104,7 @@ async fn test_available_count_matches_ready_entries_scan() {
                ON qc.queue = qe.queue
               AND qc.priority = qe.priority
              WHERE qe.queue = $1"
-        ))
+        )))
         .bind(queue)
         .fetch_one(pool)
         .await
@@ -4150,7 +4163,7 @@ async fn test_available_count_matches_ready_entries_scan() {
 
     // ── checkpoint 5: cancel an available row ────────────────────────
     // Pick a still-available job at priority 2 and cancel it.
-    let candidate: i64 = sqlx::query_scalar(&format!(
+    let candidate: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT job_id
          FROM {schema}.ready_entries AS ready
          JOIN {schema}.queue_claim_heads AS claims
@@ -4161,7 +4174,7 @@ async fn test_available_count_matches_ready_entries_scan() {
            AND ready.lane_seq >= claims.claim_seq
          ORDER BY ready.lane_seq ASC
          LIMIT 1"
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -4220,13 +4233,13 @@ async fn test_available_count_matches_ready_entries_scan() {
     // Same compat route in reverse — verifies delete_job_compat decrements
     // the counter only for rows still satisfying lane_seq >= claim_seq
     // (the same predicate the legacy scan used).
-    let compat_id: i64 = sqlx::query_scalar(&format!(
+    let compat_id: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT job_id
          FROM {schema}.ready_entries
          WHERE queue = $1 AND kind = 'compat_kind'
          ORDER BY lane_seq DESC
          LIMIT 1"
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -4263,16 +4276,17 @@ async fn test_queue_storage_queue_counts_and_claims_aggregate_across_stripes() {
         .await
         .expect("Failed to enqueue striped jobs");
 
-    let physical_queues: Vec<String> = sqlx::query_scalar(&format!(
-        r#"
+    let physical_queues: Vec<String> =
+        sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+            r#"
         SELECT DISTINCT queue
         FROM {schema}.ready_entries
         ORDER BY queue
         "#
-    ))
-    .fetch_all(&pool)
-    .await
-    .expect("Failed to read physical stripe queues");
+        )))
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to read physical stripe queues");
     assert!(
         physical_queues.len() > 1,
         "expected jobs to span multiple physical queues, got {physical_queues:?}"
@@ -4424,14 +4438,14 @@ async fn test_queue_storage_claim_runtime_does_not_wait_for_lease_rotation_lock(
         .expect("Failed to enqueue lease-lock job");
 
     let mut lock_tx = pool.begin().await.expect("Failed to begin lease lock tx");
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         r#"
         SELECT current_slot
         FROM {schema}.lease_ring_state
         WHERE singleton = TRUE
         FOR UPDATE
         "#
-    ))
+    )))
     .execute(lock_tx.as_mut())
     .await
     .expect("Failed to lock lease ring state");
@@ -4484,9 +4498,9 @@ async fn test_queue_storage_claim_runtime_applies_priority_aging_dynamically() {
     )
     .await;
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.ready_entries SET run_at = $1 WHERE job_id = $2"
-    ))
+    )))
     .bind(Utc::now() - chrono::Duration::seconds(aging_interval.as_secs() as i64 * 4))
     .bind(aged_job_id)
     .execute(&pool)
@@ -4579,9 +4593,9 @@ async fn test_queue_storage_aged_completion_keeps_lane_priority_for_done_key() {
         .await
         .expect("Failed to complete high-priority job");
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.ready_entries SET run_at = $1 WHERE job_id = $2"
-    ))
+    )))
     .bind(Utc::now() - chrono::Duration::seconds(aging_interval.as_secs() as i64 * 4))
     .bind(low_id)
     .execute(&pool)
@@ -4601,9 +4615,9 @@ async fn test_queue_storage_aged_completion_keeps_lane_priority_for_done_key() {
         .await
         .expect("Failed to complete aged low-priority job");
 
-    let stored_priority: i16 = sqlx::query_scalar(&format!(
+    let stored_priority: i16 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT priority FROM {schema}.done_entries WHERE job_id = $1"
-    ))
+    )))
     .bind(low_id)
     .fetch_one(&pool)
     .await
@@ -4658,9 +4672,9 @@ async fn test_queue_storage_bounded_claimers_can_steal_idle_slot() {
         .expect("instance A should acquire claimer")
         .expect("instance A should get a claimer slot");
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.queue_claimer_leases SET last_claimed_at = $1 WHERE queue = $2 AND claimer_slot = $3"
-    ))
+    )))
     .bind(Utc::now() - chrono::Duration::milliseconds(1_000))
     .bind(queue)
     .bind(lease_a.claimer_slot)
@@ -4698,9 +4712,9 @@ async fn test_queue_storage_claimer_heartbeat_skips_fresh_lease() {
         .expect("instance should acquire claimer")
         .expect("instance should get a claimer slot");
 
-    let before: DateTime<Utc> = sqlx::query_scalar(&format!(
+    let before: DateTime<Utc> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT last_claimed_at FROM {schema}.queue_claimer_leases WHERE queue = $1 AND claimer_slot = $2"
-    ))
+    )))
     .bind(queue)
     .bind(lease.claimer_slot)
     .fetch_one(&pool)
@@ -4727,9 +4741,9 @@ async fn test_queue_storage_claimer_heartbeat_skips_fresh_lease() {
         .expect("fresh lease claim should succeed");
     assert_eq!(claimed.len(), 1);
 
-    let after_fresh: DateTime<Utc> = sqlx::query_scalar(&format!(
+    let after_fresh: DateTime<Utc> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT last_claimed_at FROM {schema}.queue_claimer_leases WHERE queue = $1 AND claimer_slot = $2"
-    ))
+    )))
     .bind(queue)
     .bind(lease.claimer_slot)
     .fetch_one(&pool)
@@ -4740,9 +4754,9 @@ async fn test_queue_storage_claimer_heartbeat_skips_fresh_lease() {
         "fresh heartbeat should not rewrite queue_claimer_leases"
     );
 
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.queue_claimer_leases SET last_claimed_at = $1 WHERE queue = $2 AND claimer_slot = $3"
-    ))
+    )))
     .bind(Utc::now() - chrono::Duration::milliseconds(600))
     .bind(queue)
     .bind(lease.claimer_slot)
@@ -4770,9 +4784,9 @@ async fn test_queue_storage_claimer_heartbeat_skips_fresh_lease() {
         .expect("stale lease claim should succeed");
     assert_eq!(claimed.len(), 1);
 
-    let after_stale: DateTime<Utc> = sqlx::query_scalar(&format!(
+    let after_stale: DateTime<Utc> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT last_claimed_at FROM {schema}.queue_claimer_leases WHERE queue = $1 AND claimer_slot = $2"
-    ))
+    )))
     .bind(queue)
     .bind(lease.claimer_slot)
     .fetch_one(&pool)
@@ -4817,9 +4831,9 @@ async fn test_queue_storage_prune_oldest_blocks_on_reader_lock() {
     );
 
     let mut reader_tx = pool.begin().await.expect("Failed to begin reader lock tx");
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "LOCK TABLE {schema}.ready_entries_0, {schema}.done_entries_0 IN ACCESS SHARE MODE"
-    ))
+    )))
     .execute(reader_tx.as_mut())
     .await
     .expect("Failed to lock ready/done reader tables");
@@ -5747,20 +5761,20 @@ async fn test_queue_storage_jobs_view_insert_select_delete_compat() {
     assert_eq!(jobs[1].id, scheduled_id);
     assert_eq!(jobs[1].state, JobState::Scheduled);
 
-    let ready_count: i64 = sqlx::query_scalar(&format!(
+    let ready_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.ready_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("Failed to count ready entries");
     assert_eq!(ready_count, 1);
 
-    let deferred_count: i64 = sqlx::query_scalar(&format!(
+    let deferred_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.deferred_jobs WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -5780,22 +5794,23 @@ async fn test_queue_storage_jobs_view_insert_select_delete_compat() {
             .fetch_one(&pool)
             .await
             .expect("Failed to count remaining awa.jobs rows");
-    let ready_after_delete: i64 = sqlx::query_scalar(&format!(
+    let ready_after_delete: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.ready_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("Failed to recount ready entries");
-    let deferred_after_delete: i64 = sqlx::query_scalar(&format!(
-        "SELECT count(*)::bigint FROM {}.deferred_jobs WHERE queue = $1",
-        store.schema()
-    ))
-    .bind(queue)
-    .fetch_one(&pool)
-    .await
-    .expect("Failed to recount deferred rows");
+    let deferred_after_delete: i64 =
+        sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
+            "SELECT count(*)::bigint FROM {}.deferred_jobs WHERE queue = $1",
+            store.schema()
+        )))
+        .bind(queue)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to recount deferred rows");
     assert_eq!(remaining, 0);
     assert_eq!(ready_after_delete, 0);
     assert_eq!(deferred_after_delete, 0);
@@ -5838,9 +5853,9 @@ async fn test_priority_aging_lifts_effective_priority_and_records_original() {
     // Backdate past two aging windows so floor(elapsed / interval) = 2,
     // i.e. a priority-4 row's effective priority becomes 2.
     let aging_interval = Duration::from_millis(100);
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "UPDATE {schema}.ready_entries SET run_at = clock_timestamp() - interval '250 milliseconds'"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("Failed to backdate ready row for priority aging test");
@@ -5984,7 +5999,7 @@ async fn test_queue_storage_ensure_lane_cache_recovers_after_rollback() {
         format!("DELETE FROM {schema}.queue_lanes WHERE queue = $1 AND priority = $2"),
         format!("DELETE FROM {schema}.ready_entries WHERE queue = $1 AND priority = $2"),
     ] {
-        sqlx::query(&stmt)
+        sqlx::query(awa_model::sql_safety::audited_sql(stmt.clone()))
             .bind(queue)
             .bind(4_i16)
             .execute(&pool)
@@ -6000,9 +6015,9 @@ async fn test_queue_storage_ensure_lane_cache_recovers_after_rollback() {
         .await
         .expect("post-rollback enqueue should self-heal via cache invalidation");
 
-    let next_seq: i64 = sqlx::query_scalar(&format!(
+    let next_seq: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT next_seq FROM {schema}.queue_enqueue_heads WHERE queue = $1 AND priority = $2"
-    ))
+    )))
     .bind(queue)
     .bind(4_i16)
     .fetch_one(&pool)
@@ -6097,17 +6112,18 @@ async fn test_queue_storage_multi_shard_round_trip_through_completion() {
     }
 
     // Every shard should hold at least one terminal row.
-    let shard_counts: Vec<(i16, i64)> = sqlx::query_as(&format!(
-        "SELECT enqueue_shard, count(*)::bigint
+    let shard_counts: Vec<(i16, i64)> =
+        sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
+            "SELECT enqueue_shard, count(*)::bigint
          FROM {schema}.done_entries
          WHERE queue = $1
          GROUP BY enqueue_shard
          ORDER BY enqueue_shard"
-    ))
-    .bind(queue)
-    .fetch_all(&pool)
-    .await
-    .expect("count done_entries per shard");
+        )))
+        .bind(queue)
+        .fetch_all(&pool)
+        .await
+        .expect("count done_entries per shard");
 
     let shards_observed: Vec<i16> = shard_counts.iter().map(|(s, _)| *s).collect();
     assert_eq!(
@@ -6126,14 +6142,14 @@ async fn test_queue_storage_multi_shard_round_trip_through_completion() {
     // lane_seq)` tuple that would otherwise collide. Each shard's
     // `lane_seq` starts independently at 1, so at S=4 with 4 jobs per
     // shard there must be at least one tuple that repeats.
-    let max_dupes: i64 = sqlx::query_scalar(&format!(
+    let max_dupes: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(max(c), 0)::bigint FROM (
              SELECT count(*) AS c
              FROM {schema}.done_entries
              WHERE queue = $1
              GROUP BY ready_slot, queue, priority, lane_seq
          ) AS grouped"
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -6227,9 +6243,9 @@ async fn test_queue_storage_ordering_key_routes_to_stable_shard() {
         }
     }
 
-    let rows: Vec<(i64, i16)> = sqlx::query_as(&format!(
+    let rows: Vec<(i64, i16)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT job_id, enqueue_shard FROM {schema}.ready_entries WHERE queue = $1"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -6317,13 +6333,13 @@ async fn test_queue_storage_multi_shard_claim_path_does_not_starve_shards() {
         }
     }
 
-    let pre_counts: Vec<(i16, i64)> = sqlx::query_as(&format!(
+    let pre_counts: Vec<(i16, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT enqueue_shard, count(*)::bigint
          FROM {schema}.ready_entries
          WHERE queue = $1
          GROUP BY enqueue_shard
          ORDER BY enqueue_shard"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -6339,11 +6355,11 @@ async fn test_queue_storage_multi_shard_claim_path_does_not_starve_shards() {
 
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let done_count: i64 = sqlx::query_scalar(&format!(
+        let done_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
             "SELECT count(*)::bigint
              FROM {schema}.done_entries
              WHERE queue = $1"
-        ))
+        )))
         .bind(queue)
         .fetch_one(&pool)
         .await
@@ -6359,7 +6375,7 @@ async fn test_queue_storage_multi_shard_claim_path_does_not_starve_shards() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    let heads: Vec<(i16, i64, i64)> = sqlx::query_as(&format!(
+    let heads: Vec<(i16, i64, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT claims.enqueue_shard,
                 claims.claim_seq,
                 enqueues.next_seq
@@ -6370,7 +6386,7 @@ async fn test_queue_storage_multi_shard_claim_path_does_not_starve_shards() {
           AND enqueues.enqueue_shard = claims.enqueue_shard
          WHERE claims.queue = $1
          ORDER BY claims.enqueue_shard"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -6458,12 +6474,12 @@ async fn test_queue_storage_lowering_enqueue_shards_drains_existing_rows() {
         }
     }
 
-    let pre_shards: Vec<i16> = sqlx::query_scalar(&format!(
+    let pre_shards: Vec<i16> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT DISTINCT enqueue_shard
          FROM {schema}.ready_entries
          WHERE queue = $1
          ORDER BY enqueue_shard"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -6502,12 +6518,12 @@ async fn test_queue_storage_lowering_enqueue_shards_drains_existing_rows() {
         .await;
     }
 
-    let done_shards: Vec<i16> = sqlx::query_scalar(&format!(
+    let done_shards: Vec<i16> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT DISTINCT enqueue_shard
          FROM {schema}.done_entries
          WHERE queue = $1
          ORDER BY enqueue_shard"
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await

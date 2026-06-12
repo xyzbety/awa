@@ -141,11 +141,12 @@ async fn queue_state_counts(pool: &sqlx::PgPool, queue: &str) -> HashMap<String,
              ) AS jobs \
              GROUP BY state"
         );
-        let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
-            .bind(queue)
-            .fetch_all(pool)
-            .await
-            .expect("Failed to query queue-storage state counts");
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as(awa_model::sql_safety::audited_sql(sql.clone()))
+                .bind(queue)
+                .fetch_all(pool)
+                .await
+                .expect("Failed to query queue-storage state counts");
         return rows.into_iter().collect();
     }
 

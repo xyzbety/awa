@@ -157,7 +157,7 @@ async fn run_inner(conn: &mut PgConnection) -> Result<(), AwaError> {
             }
             info!(version, description, "Applying migration");
             for step in steps {
-                sqlx::raw_sql(step).execute(&mut *conn).await?;
+                sqlx::raw_sql(*step).execute(&mut *conn).await?;
             }
             info!(version, "Migration applied");
         }

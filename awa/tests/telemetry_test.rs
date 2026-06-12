@@ -79,7 +79,10 @@ async fn ensure_database_exists(url: &str) {
         .map(|(_, name)| name)
         .expect("database URL should include a database name");
     let create_sql = format!("CREATE DATABASE {database_name}");
-    match sqlx::query(&create_sql).execute(&admin_pool).await {
+    match sqlx::query(awa_model::sql_safety::audited_sql(create_sql.clone()))
+        .execute(&admin_pool)
+        .await
+    {
         Ok(_) => {}
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
         Err(err) => panic!("Failed to create telemetry test database {database_name}: {err}"),
@@ -215,7 +218,7 @@ async fn queue_job_count(pool: &sqlx::PgPool, queue: &str, state: &str) -> i64 {
              ) AS jobs \
              WHERE state = $2::awa.job_state"
         );
-        return sqlx::query_scalar(&sql)
+        return sqlx::query_scalar(awa_model::sql_safety::audited_sql(sql.clone()))
             .bind(queue)
             .bind(state)
             .fetch_one(pool)
@@ -288,7 +291,7 @@ async fn queue_state_breakdown(pool: &sqlx::PgPool, queue: &str) -> Vec<(String,
              ) AS jobs \
              GROUP BY state ORDER BY state"
         );
-        return sqlx::query_as(&sql)
+        return sqlx::query_as(awa_model::sql_safety::audited_sql(sql.clone()))
             .bind(queue)
             .fetch_all(pool)
             .await
@@ -307,11 +310,11 @@ async fn queue_state_breakdown(pool: &sqlx::PgPool, queue: &str) -> Vec<(String,
 
 async fn backdate_callback_timeouts_for_queue(pool: &sqlx::PgPool, queue: &str) {
     if let Some(schema) = active_queue_storage_schema(pool).await {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.leases \
              SET callback_timeout_at = now() - interval '1 second' \
              WHERE queue = $1 AND state = 'waiting_external'"
-        ))
+        )))
         .bind(queue)
         .execute(pool)
         .await
@@ -331,11 +334,11 @@ async fn backdate_callback_timeouts_for_queue(pool: &sqlx::PgPool, queue: &str) 
 
 async fn backdate_callback_timeouts_by_ids(pool: &sqlx::PgPool, job_ids: &[i64]) {
     if let Some(schema) = active_queue_storage_schema(pool).await {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.leases \
              SET callback_timeout_at = now() - interval '1 second' \
              WHERE job_id = ANY($1) AND state = 'waiting_external'"
-        ))
+        )))
         .bind(job_ids)
         .execute(pool)
         .await
@@ -354,11 +357,11 @@ async fn backdate_callback_timeouts_by_ids(pool: &sqlx::PgPool, job_ids: &[i64])
 
 async fn backdate_retryable_run_at_for_queue(pool: &sqlx::PgPool, queue: &str) {
     if let Some(schema) = active_queue_storage_schema(pool).await {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.deferred_jobs \
              SET run_at = now() - interval '1 second' \
              WHERE queue = $1 AND state = 'retryable'"
-        ))
+        )))
         .bind(queue)
         .execute(pool)
         .await
@@ -378,11 +381,11 @@ async fn backdate_retryable_run_at_for_queue(pool: &sqlx::PgPool, queue: &str) {
 
 async fn backdate_scheduled_run_at_by_ids(pool: &sqlx::PgPool, job_ids: &[i64]) {
     if let Some(schema) = active_queue_storage_schema(pool).await {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.deferred_jobs \
              SET run_at = now() - interval '1 second' \
              WHERE job_id = ANY($1) AND state = 'scheduled'"
-        ))
+        )))
         .bind(job_ids)
         .execute(pool)
         .await
@@ -405,20 +408,20 @@ async fn backdate_running_deadline(pool: &sqlx::PgPool, job_id: i64) {
         // keeps short claims on `lease_claims` for their full
         // lifetime. Update both so the test's deadline-rescue setup
         // works regardless of which path the in-flight attempt is on.
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.leases \
              SET deadline_at = now() - interval '1 second' \
              WHERE job_id = $1 AND state = 'running'"
-        ))
+        )))
         .bind(job_id)
         .execute(pool)
         .await
         .expect("Failed to backdate queue-storage lease deadline rescue job");
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.lease_claims \
              SET deadline_at = now() - interval '1 second' \
              WHERE job_id = $1"
-        ))
+        )))
         .bind(job_id)
         .execute(pool)
         .await
@@ -441,20 +444,20 @@ async fn backdate_running_heartbeat(pool: &sqlx::PgPool, job_id: i64) {
         // deadline-based rescue is the analogue; backdate the
         // receipt's deadline_at so `rescue_expired_receipt_deadlines_tx`
         // closes it on the next tick.
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.leases \
              SET heartbeat_at = now() - interval '5 minutes' \
              WHERE job_id = $1 AND state = 'running'"
-        ))
+        )))
         .bind(job_id)
         .execute(pool)
         .await
         .expect("Failed to backdate queue-storage lease heartbeat rescue job");
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.lease_claims \
              SET deadline_at = now() - interval '1 second' \
              WHERE job_id = $1"
-        ))
+        )))
         .bind(job_id)
         .execute(pool)
         .await

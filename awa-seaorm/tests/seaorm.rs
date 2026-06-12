@@ -18,9 +18,9 @@ async fn setup_database() -> (sqlx::PgPool, DatabaseConnection) {
 
 async fn create_app_table(pool: &sqlx::PgPool, table_name: &str) {
     let table_name = quoted_identifier(table_name);
-    sqlx::query(&format!(
+    sqlx::query(awa::awa_model::sql_safety::audited_sql(format!(
         "CREATE TABLE IF NOT EXISTS {table_name} (id TEXT PRIMARY KEY, note TEXT NOT NULL)"
-    ))
+    )))
     .execute(pool)
     .await
     .expect("create app table");
@@ -28,10 +28,12 @@ async fn create_app_table(pool: &sqlx::PgPool, table_name: &str) {
 
 async fn drop_app_table(pool: &sqlx::PgPool, table_name: &str) {
     let table_name = quoted_identifier(table_name);
-    sqlx::query(&format!("DROP TABLE IF EXISTS {table_name}"))
-        .execute(pool)
-        .await
-        .expect("drop app table");
+    sqlx::query(awa::awa_model::sql_safety::audited_sql(format!(
+        "DROP TABLE IF EXISTS {table_name}"
+    )))
+    .execute(pool)
+    .await
+    .expect("drop app table");
 }
 
 fn quoted_identifier(identifier: &str) -> String {
@@ -91,9 +93,9 @@ async fn seaorm_repository_commit_keeps_app_row_and_job_together() {
 
     txn.commit().await.expect("commit transaction");
 
-    let app_count: i64 = sqlx::query_scalar(&format!(
+    let app_count: i64 = sqlx::query_scalar(awa::awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {table_name} WHERE id = 'commit-app-row'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count committed app row");
@@ -136,9 +138,9 @@ async fn seaorm_repository_rollback_discards_app_row_and_job() {
 
     txn.rollback().await.expect("rollback transaction");
 
-    let app_count: i64 = sqlx::query_scalar(&format!(
+    let app_count: i64 = sqlx::query_scalar(awa::awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*) FROM {table_name} WHERE id = 'rollback-app-row'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count rolled-back app row");

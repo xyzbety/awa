@@ -79,11 +79,11 @@ async fn active_queue_storage_schema(pool: &sqlx::PgPool) -> Option<String> {
 
 async fn backdate_running_heartbeat(pool: &sqlx::PgPool, job_id: i64) {
     if let Some(schema) = active_queue_storage_schema(pool).await {
-        sqlx::query(&format!(
+        sqlx::query(awa_model::sql_safety::audited_sql(format!(
             "UPDATE {schema}.leases \
              SET heartbeat_at = now() - interval '5 minutes' \
              WHERE job_id = $1 AND state = 'running'"
-        ))
+        )))
         .bind(job_id)
         .execute(pool)
         .await

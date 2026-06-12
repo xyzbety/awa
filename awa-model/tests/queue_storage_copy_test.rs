@@ -28,10 +28,13 @@ async fn setup_store_with_config(
     migrations::run(&pool).await.expect("run migrations");
 
     let store = QueueStorage::new(config).expect("create queue storage");
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema()))
-        .execute(&pool)
-        .await
-        .expect("drop queue storage schema");
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
+        "DROP SCHEMA IF EXISTS {} CASCADE",
+        store.schema()
+    )))
+    .execute(&pool)
+    .await
+    .expect("drop queue storage schema");
     store
         .prepare_schema(&pool)
         .await
@@ -150,10 +153,10 @@ async fn queue_storage_copy_enqueues_ready_and_deferred_rows() {
         .expect("copy enqueue");
     assert_eq!(inserted, 3);
 
-    let ready: Vec<(i64, i64, Option<serde_json::Value>)> = sqlx::query_as(&format!(
+    let ready: Vec<(i64, i64, Option<serde_json::Value>)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT lane_seq, (args->>'seq')::bigint, payload FROM {}.ready_entries WHERE queue = $1 ORDER BY lane_seq",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -175,13 +178,13 @@ async fn queue_storage_copy_enqueues_ready_and_deferred_rows() {
         "default payloads should persist as SQL NULL in COPY rows"
     );
 
-    let (compact_payload_bytes, expanded_payload_bytes): (i32, i32) = sqlx::query_as(&format!(
+    let (compact_payload_bytes, expanded_payload_bytes): (i32, i32) = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(pg_column_size(payload), 0)::int, \
                 pg_column_size('{{\"metadata\":{{}},\"tags\":[],\"errors\":[],\"progress\":null}}'::jsonb)::int \
            FROM {}.ready_entries \
           WHERE queue = $1 AND lane_seq = $2",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .bind(default.0)
     .fetch_one(&pool)
@@ -196,10 +199,10 @@ async fn queue_storage_copy_enqueues_ready_and_deferred_rows() {
         "compact payload should use fewer JSONB bytes ({compact_payload_bytes} >= {expanded_payload_bytes})"
     );
 
-    let deferred_count: i64 = sqlx::query_scalar(&format!(
+    let deferred_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.deferred_jobs WHERE queue = $1 AND state = 'scheduled'",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -208,7 +211,7 @@ async fn queue_storage_copy_enqueues_ready_and_deferred_rows() {
 
     // Available count is derived from queue_enqueue_heads.next_seq -
     // queue_claim_heads.claim_seq.
-    let available_count: i64 = sqlx::query_scalar(&format!(
+    let available_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT GREATEST(qe.next_seq - qc.claim_seq, 0)
          FROM {schema}.queue_enqueue_heads AS qe
          JOIN {schema}.queue_claim_heads AS qc
@@ -216,7 +219,7 @@ async fn queue_storage_copy_enqueues_ready_and_deferred_rows() {
           AND qc.priority = qe.priority
          WHERE qe.queue = $1 AND qe.priority = 1",
         schema = store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -257,20 +260,20 @@ async fn queue_storage_copy_rolls_back_on_unique_conflict() {
         "unexpected error: {err:?}"
     );
 
-    let ready_count: i64 = sqlx::query_scalar(&format!(
+    let ready_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.ready_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("count ready rows");
     assert_eq!(ready_count, 0);
 
-    let lane_available: i64 = sqlx::query_scalar(&format!(
+    let lane_available: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint FROM {0}.queue_enqueue_heads qe JOIN {0}.queue_claim_heads qc ON qc.queue = qe.queue AND qc.priority = qe.priority WHERE qe.queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -311,20 +314,20 @@ async fn queue_storage_batch_rolls_back_on_batched_unique_conflict() {
         "unexpected error: {err:?}"
     );
 
-    let ready_count: i64 = sqlx::query_scalar(&format!(
+    let ready_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.ready_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("count ready rows");
     assert_eq!(ready_count, 0);
 
-    let lane_available: i64 = sqlx::query_scalar(&format!(
+    let lane_available: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint FROM {0}.queue_enqueue_heads qe JOIN {0}.queue_claim_heads qc ON qc.queue = qe.queue AND qc.priority = qe.priority WHERE qe.queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -365,20 +368,20 @@ async fn queue_storage_copy_rolls_back_on_existing_unique_conflict() {
         "unexpected error: {err:?}"
     );
 
-    let ready_count: i64 = sqlx::query_scalar(&format!(
+    let ready_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT count(*)::bigint FROM {}.ready_entries WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
     .expect("count ready rows");
     assert_eq!(ready_count, 1);
 
-    let lane_available: i64 = sqlx::query_scalar(&format!(
+    let lane_available: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint FROM {0}.queue_enqueue_heads qe JOIN {0}.queue_claim_heads qc ON qc.queue = qe.queue AND qc.priority = qe.priority WHERE qe.queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -424,10 +427,10 @@ async fn queue_storage_copy_concurrent_lane_seq_is_dense() {
         );
     }
 
-    let lane_seqs: Vec<i64> = sqlx::query_scalar(&format!(
+    let lane_seqs: Vec<i64> = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT lane_seq FROM {}.ready_entries WHERE queue = $1 ORDER BY lane_seq",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -439,10 +442,10 @@ async fn queue_storage_copy_concurrent_lane_seq_is_dense() {
         assert_eq!(actual_seq, first_seq + offset as i64);
     }
 
-    let available_count: i64 = sqlx::query_scalar(&format!(
+    let available_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint FROM {0}.queue_enqueue_heads qe JOIN {0}.queue_claim_heads qc ON qc.queue = qe.queue AND qc.priority = qe.priority WHERE qe.queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await
@@ -465,10 +468,10 @@ async fn queue_storage_copy_distributes_across_stripes() {
         .expect("copy enqueue striped");
     assert_eq!(inserted, 8);
 
-    let rows: Vec<(String, i64)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, i64)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT queue, lane_seq FROM {}.ready_entries ORDER BY queue, lane_seq",
         store.schema()
-    ))
+    )))
     .fetch_all(&pool)
     .await
     .expect("read striped ready rows");
@@ -484,10 +487,10 @@ async fn queue_storage_copy_distributes_across_stripes() {
         assert_eq!(seqs[1], seqs[0] + 1, "unexpected lane seqs for {physical}");
     }
 
-    let available_count: i64 = sqlx::query_scalar(&format!(
+    let available_count: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(format!(
         "SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint FROM {0}.queue_enqueue_heads qe JOIN {0}.queue_claim_heads qc ON qc.queue = qe.queue AND qc.priority = qe.priority WHERE qe.queue = ANY($1)",
         store.schema()
-    ))
+    )))
     .bind((0..4).map(|stripe| format!("{queue}#{stripe}")).collect::<Vec<_>>())
     .fetch_one(&pool)
     .await
@@ -537,10 +540,10 @@ async fn queue_storage_copy_escapes_csv_special_values() {
         .expect("copy enqueue escape matrix");
     assert_eq!(inserted, jobs.len());
 
-    let ready: Vec<(String, serde_json::Value, serde_json::Value)> = sqlx::query_as(&format!(
+    let ready: Vec<(String, serde_json::Value, serde_json::Value)> = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT kind, args, payload FROM {}.ready_entries WHERE queue = $1 ORDER BY (args->>'seq')::int",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_all(&pool)
     .await
@@ -558,10 +561,10 @@ async fn queue_storage_copy_escapes_csv_special_values() {
         serde_json::Value,
         serde_json::Value,
         Option<Vec<u8>>,
-    ) = sqlx::query_as(&format!(
+    ) = sqlx::query_as(awa_model::sql_safety::audited_sql(format!(
         "SELECT kind, args, payload, unique_key FROM {}.deferred_jobs WHERE queue = $1",
         store.schema()
-    ))
+    )))
     .bind(queue)
     .fetch_one(&pool)
     .await

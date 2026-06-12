@@ -84,7 +84,10 @@ async fn ensure_database_exists(url: &str) {
         .await
         .expect("Failed to connect to admin database for queue_storage benchmarks");
     let create_sql = format!("CREATE DATABASE {database_name}");
-    match sqlx::query(&create_sql).execute(&admin_pool).await {
+    match sqlx::query(awa_model::sql_safety::audited_sql(create_sql.clone()))
+        .execute(&admin_pool)
+        .await
+    {
         Ok(_) => {}
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
         Err(err) => {
@@ -191,7 +194,7 @@ async fn ensure_pgstattuple(pool: &sqlx::PgPool) {
 
 async fn recreate_store_schema(pool: &sqlx::PgPool, store: &QueueStorage) {
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-    sqlx::query(&drop_sql)
+    sqlx::query(awa_model::sql_safety::audited_sql(drop_sql.clone()))
         .execute(pool)
         .await
         .expect("Failed to drop experimental queue storage schema");
@@ -532,7 +535,7 @@ async fn overlap_reader(
             "history_snapshot" => {
                 let query =
                     format!("SELECT count(*)::bigint FROM {schema}.ready_entries WHERE queue = $1");
-                let _: i64 = sqlx::query_scalar(&query)
+                let _: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(query.clone()))
                     .bind(&queue)
                     .fetch_one(conn.as_mut())
                     .await
@@ -556,7 +559,7 @@ async fn overlap_reader(
                      SELECT available.current_available + pruned.terminal_rollup \
                      FROM available CROSS JOIN pruned"
                 );
-                let _: i64 = sqlx::query_scalar(&query)
+                let _: i64 = sqlx::query_scalar(awa_model::sql_safety::audited_sql(query.clone()))
                     .bind(&queue)
                     .fetch_one(conn.as_mut())
                     .await

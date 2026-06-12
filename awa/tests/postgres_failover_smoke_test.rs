@@ -323,11 +323,12 @@ async fn queue_state_counts(pool: &sqlx::PgPool, queue: &str) -> HashMap<String,
              ) AS jobs \
              GROUP BY state"
         );
-        let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
-            .bind(queue)
-            .fetch_all(pool)
-            .await
-            .expect("failed to query queue-storage state counts");
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as(awa_model::sql_safety::audited_sql(sql.clone()))
+                .bind(queue)
+                .fetch_all(pool)
+                .await
+                .expect("failed to query queue-storage state counts");
         return rows.into_iter().collect();
     }
 
@@ -429,7 +430,7 @@ async fn storage_debug(pool: &sqlx::PgPool, queue: &str) -> String {
                   WHERE lc.queue = $1) + \
                  (SELECT count(*)::bigint FROM {schema}.done_entries WHERE queue = $1)"
         );
-        sqlx::query_scalar::<_, i64>(&sql)
+        sqlx::query_scalar::<_, i64>(awa_model::sql_safety::audited_sql(sql.clone()))
             .bind(queue)
             .fetch_one(pool)
             .await

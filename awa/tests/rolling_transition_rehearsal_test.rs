@@ -221,9 +221,9 @@ async fn reset_schema(pool: &sqlx::PgPool, queue_storage_schema: &str) {
         .execute(pool)
         .await
         .expect("drop awa schema");
-    sqlx::query(&format!(
+    sqlx::query(awa_model::sql_safety::audited_sql(format!(
         "DROP SCHEMA IF EXISTS {queue_storage_schema} CASCADE"
-    ))
+    )))
     .execute(pool)
     .await
     .expect("drop queue-storage schema");
@@ -241,9 +241,11 @@ async fn reset_schema(pool: &sqlx::PgPool, queue_storage_schema: &str) {
     .await
     .unwrap_or_default();
     for schema in leftover_schemas {
-        let _ = sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(pool)
-            .await;
+        let _ = sqlx::query(awa_model::sql_safety::audited_sql(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(pool)
+        .await;
     }
 }
 

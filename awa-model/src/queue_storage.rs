@@ -2,6 +2,7 @@ use crate::admin::{CallbackConfig, CallbackPollResult};
 use crate::dlq::{ListDlqFilter, RetryFromDlqOpts};
 use crate::error::AwaError;
 use crate::insert::prepare_row_raw;
+use crate::sql_safety::audited_sql;
 use crate::{InsertParams, JobRow, JobState};
 use chrono::TimeDelta;
 use chrono::{DateTime, Utc};
@@ -1976,7 +1977,7 @@ impl QueueStorage {
             .map_err(map_sqlx_error)?;
 
         let install_result = async {
-            sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+            sqlx::query(audited_sql(format!("CREATE SCHEMA IF NOT EXISTS {schema}")))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2004,9 +2005,9 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
             if open_receipt_claims_exists {
-                let row_count: i64 = sqlx::query_scalar(&format!(
+                let row_count: i64 = sqlx::query_scalar(audited_sql(format!(
                     "SELECT count(*)::bigint FROM {schema}.open_receipt_claims"
-                ))
+                )))
                 .fetch_one(pool)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2018,9 +2019,9 @@ impl QueueStorage {
                          then re-run prepare_schema."
                     )));
                 }
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "DROP TABLE IF EXISTS {schema}.open_receipt_claims CASCADE"
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2152,16 +2153,16 @@ impl QueueStorage {
                 )
             };
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 CREATE SEQUENCE IF NOT EXISTS {schema}.job_id_seq
                 "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_ring_state (
                 singleton      BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
@@ -2170,7 +2171,7 @@ impl QueueStorage {
                 slot_count     INT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2180,7 +2181,7 @@ impl QueueStorage {
             // fillfactor keeps the update in-page as a HOT update and the
             // aggressive vacuum threshold reclaims the non-HOT line pointer
             // churn quickly.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.queue_ring_state SET (
                 fillfactor = 50,
@@ -2190,36 +2191,36 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.queue_ring_state (singleton, current_slot, generation, slot_count)
             VALUES (TRUE, 0, 0, $1)
             ON CONFLICT (singleton) DO NOTHING
             "#
-            ))
+            )))
             .bind(self.queue_slot_count() as i32)
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_ring_slots (
                 slot        INT PRIMARY KEY,
                 generation  BIGINT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.queue_ring_slots SET (
                 fillfactor = 70,
@@ -2229,12 +2230,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.lease_ring_state (
                 singleton      BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
@@ -2243,12 +2244,12 @@ impl QueueStorage {
                 slot_count     INT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.lease_ring_state SET (
                 fillfactor = 50,
@@ -2258,36 +2259,36 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.lease_ring_state (singleton, current_slot, generation, slot_count)
             VALUES (TRUE, 0, 0, $1)
             ON CONFLICT (singleton) DO NOTHING
             "#
-            ))
+            )))
             .bind(self.lease_slot_count() as i32)
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.lease_ring_slots (
                 slot        INT PRIMARY KEY,
                 generation  BIGINT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.lease_ring_slots SET (
                 fillfactor = 70,
@@ -2297,7 +2298,7 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2308,7 +2309,7 @@ impl QueueStorage {
             // tombstones append into; rotate_claims advances it with a
             // compare-and-swap on (current_slot, generation); prune_oldest_claims
             // reclaims older partitions via TRUNCATE.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.claim_ring_state (
                 singleton      BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
@@ -2317,12 +2318,12 @@ impl QueueStorage {
                 slot_count     INT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.claim_ring_state SET (
                 fillfactor = 50,
@@ -2332,36 +2333,36 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.claim_ring_state (singleton, current_slot, generation, slot_count)
             VALUES (TRUE, 0, 0, $1)
             ON CONFLICT (singleton) DO NOTHING
             "#
-            ))
+            )))
             .bind(self.claim_slot_count() as i32)
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.claim_ring_slots (
                 slot        INT PRIMARY KEY,
                 generation  BIGINT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.claim_ring_slots SET (
                 fillfactor = 70,
@@ -2371,12 +2372,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_lanes (
                 queue           TEXT NOT NULL,
@@ -2387,12 +2388,12 @@ impl QueueStorage {
                 PRIMARY KEY (queue, priority)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_enqueue_heads (
                 queue           TEXT NOT NULL,
@@ -2402,7 +2403,7 @@ impl QueueStorage {
                 PRIMARY KEY (queue, priority, enqueue_shard)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2414,7 +2415,7 @@ impl QueueStorage {
             // stay in-page during autovacuum-blocked windows; fillfactor=70
             // bloated the heap to ~90 pages for a single live row in a
             // 30-min run with idle-in-tx pressure.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.queue_enqueue_heads SET (
                 fillfactor = 50,
@@ -2424,12 +2425,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_claim_heads (
                 queue           TEXT NOT NULL,
@@ -2439,12 +2440,12 @@ impl QueueStorage {
                 PRIMARY KEY (queue, priority, enqueue_shard)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.queue_claim_heads SET (
                 fillfactor = 50,
@@ -2454,12 +2455,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_terminal_rollups (
                 queue                  TEXT NOT NULL,
@@ -2468,7 +2469,7 @@ impl QueueStorage {
                 PRIMARY KEY (queue, priority)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2480,14 +2481,14 @@ impl QueueStorage {
             // (`next_seq - claim_seq`, O(few rows)) and nothing else
             // needs the snapshot. Drop it on every prepare_schema so
             // an upgrade from an older install reclaims the storage.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 "DROP TABLE IF EXISTS {schema}.queue_count_snapshots"
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_claimer_leases (
                 queue             TEXT NOT NULL,
@@ -2500,7 +2501,7 @@ impl QueueStorage {
                 PRIMARY KEY (queue, claimer_slot)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2512,7 +2513,7 @@ impl QueueStorage {
             // fillfactor, high-replica repros spilled frequent lease refreshes
             // to fresh pages. Match the pattern of the other
             // 1-row-per-(queue, slot) hot Warm tables.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.queue_claimer_leases SET (
                 fillfactor = 50,
@@ -2522,12 +2523,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.queue_claimer_state (
                 queue            TEXT PRIMARY KEY,
@@ -2535,7 +2536,7 @@ impl QueueStorage {
                 updated_at       TIMESTAMPTZ NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2555,27 +2556,27 @@ impl QueueStorage {
             // claimer_slots-per-queue (single digits in practice), so the
             // recheck is cheap. fillfactor=50 (set on the table above)
             // pairs with this to give HOT updates room to land in-page.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             DROP INDEX IF EXISTS {schema}.idx_{schema}_queue_claimer_leases_owner
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_queue_claimer_leases_owner
                 ON {schema}.queue_claimer_leases (queue, owner_instance_id)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
             let mut backfill_tx = pool.begin().await.map_err(map_sqlx_error)?;
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.queue_enqueue_heads AS heads (
                 queue,
@@ -2592,12 +2593,12 @@ impl QueueStorage {
             ON CONFLICT (queue, priority, enqueue_shard) DO UPDATE
             SET next_seq = GREATEST(heads.next_seq, EXCLUDED.next_seq)
             "#
-            ))
+            )))
             .execute(backfill_tx.as_mut())
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.queue_claim_heads AS heads (
                 queue,
@@ -2614,12 +2615,12 @@ impl QueueStorage {
             ON CONFLICT (queue, priority, enqueue_shard) DO UPDATE
             SET claim_seq = GREATEST(heads.claim_seq, EXCLUDED.claim_seq)
             "#
-            ))
+            )))
             .execute(backfill_tx.as_mut())
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             INSERT INTO {schema}.queue_terminal_rollups AS rollups (
                 queue,
@@ -2638,18 +2639,18 @@ impl QueueStorage {
                 EXCLUDED.pruned_completed_count
             )
             "#
-            ))
+            )))
             .execute(backfill_tx.as_mut())
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             UPDATE {schema}.queue_lanes
             SET pruned_completed_count = 0
             WHERE pruned_completed_count > 0
             "#
-            ))
+            )))
             .execute(backfill_tx.as_mut())
             .await
             .map_err(map_sqlx_error)?;
@@ -2669,7 +2670,7 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.leases (
                 lease_slot        INT NOT NULL,
@@ -2693,7 +2694,7 @@ impl QueueStorage {
                 PRIMARY KEY (lease_slot, queue, priority, enqueue_shard, lane_seq)
             ) PARTITION BY LIST (lease_slot)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2736,23 +2737,23 @@ impl QueueStorage {
             // Regular tables → rename aside before creating the partitioned
             // parent. Partitioned or absent → do nothing.
             if lease_claims_relkind.as_deref() == Some("r") {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "ALTER TABLE {schema}.lease_claims RENAME TO lease_claims_legacy"
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
             }
             if closures_relkind.as_deref() == Some("r") {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "ALTER TABLE {schema}.lease_claim_closures RENAME TO lease_claim_closures_legacy"
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
             }
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.lease_claims (
                 claim_slot        INT NOT NULL,
@@ -2772,7 +2773,7 @@ impl QueueStorage {
                 PRIMARY KEY (claim_slot, job_id, run_lease)
             ) PARTITION BY LIST (claim_slot)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2780,35 +2781,35 @@ impl QueueStorage {
             // Upgrade path for clusters that prepared the schema before
             // deadline_at was introduced. ADD COLUMN IF NOT EXISTS on a
             // partitioned parent propagates to every child partition.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.lease_claims
                 ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
             for slot in 0..claim_slot_count {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE TABLE IF NOT EXISTS {} PARTITION OF {schema}.lease_claims
                 FOR VALUES IN ({slot})
                 "#,
                     claim_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
             }
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claims_stale
                 ON {schema}.lease_claims (materialized_at, claimed_at, job_id)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2817,13 +2818,13 @@ impl QueueStorage {
             // are append-heavy and roughly time-ordered, so BRIN avoids a
             // btree insert on every short-path claim while still letting
             // rescue skip ranges whose deadlines are all in the future.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claims_deadline_brin
                 ON {schema}.lease_claims USING BRIN (deadline_at)
                 WITH (pages_per_range = 16)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2831,12 +2832,12 @@ impl QueueStorage {
             // Secondary index on (job_id, run_lease) for completion /
             // materialize / rescue paths that don't carry claim_slot in
             // hand. Propagates to every child partition.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claims_job_run
                 ON {schema}.lease_claims (job_id, run_lease)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2872,7 +2873,7 @@ impl QueueStorage {
                 // `ON CONFLICT DO NOTHING` masks the inconsistency
                 // without surfacing it.
                 let mut migrate_tx = pool.begin().await.map_err(map_sqlx_error)?;
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 INSERT INTO {schema}.lease_claims (
                     claim_slot, job_id, run_lease, ready_slot, ready_generation,
@@ -2887,14 +2888,14 @@ impl QueueStorage {
                 FROM {schema}.lease_claims_legacy
                 ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
                 "#
-                ))
+                )))
                 .execute(migrate_tx.as_mut())
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "DROP TABLE {schema}.lease_claims_legacy"
-                ))
+                )))
                 .execute(migrate_tx.as_mut())
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2902,7 +2903,7 @@ impl QueueStorage {
                 migrate_tx.commit().await.map_err(map_sqlx_error)?;
             }
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.lease_claim_closures (
                 claim_slot        INT NOT NULL,
@@ -2913,19 +2914,19 @@ impl QueueStorage {
                 PRIMARY KEY (claim_slot, job_id, run_lease)
             ) PARTITION BY LIST (claim_slot)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
             for slot in 0..claim_slot_count {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE TABLE IF NOT EXISTS {} PARTITION OF {schema}.lease_claim_closures
                 FOR VALUES IN ({slot})
                 "#,
                     closure_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2934,12 +2935,12 @@ impl QueueStorage {
             // Secondary index on (job_id, run_lease) mirroring the one on
             // lease_claims — completion / rescue sites that don't have
             // claim_slot in hand still find closures via this index.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_lease_claim_closures_job_run
                 ON {schema}.lease_claim_closures (job_id, run_lease)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2964,7 +2965,7 @@ impl QueueStorage {
                 // so a crash leaves the schema either fully migrated
                 // or fully not.
                 let mut migrate_tx = pool.begin().await.map_err(map_sqlx_error)?;
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 INSERT INTO {schema}.lease_claim_closures (
                     claim_slot, job_id, run_lease, outcome, closed_at
@@ -2975,14 +2976,14 @@ impl QueueStorage {
                 FROM {schema}.lease_claim_closures_legacy
                 ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
                 "#
-                ))
+                )))
                 .execute(migrate_tx.as_mut())
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "DROP TABLE {schema}.lease_claim_closures_legacy"
-                ))
+                )))
                 .execute(migrate_tx.as_mut())
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2990,7 +2991,7 @@ impl QueueStorage {
                 migrate_tx.commit().await.map_err(map_sqlx_error)?;
             }
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.attempt_state (
                 job_id              BIGINT NOT NULL,
@@ -3006,17 +3007,17 @@ impl QueueStorage {
                 PRIMARY KEY (job_id, run_lease)
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.attempt_state
                 ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -3025,7 +3026,7 @@ impl QueueStorage {
             // is the only index, and all mutable columns (heartbeat_at,
             // updated_at, progress, callback_*) are outside it, so a reduced
             // fillfactor keeps heartbeat UPDATEs HOT.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             ALTER TABLE {schema}.attempt_state SET (
                 fillfactor = 80,
@@ -3035,12 +3036,12 @@ impl QueueStorage {
                 autovacuum_vacuum_cost_delay = 2
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.ready_entries (
                 ready_slot        INT NOT NULL,
@@ -3064,12 +3065,12 @@ impl QueueStorage {
                 PRIMARY KEY (ready_slot, queue, priority, enqueue_shard, lane_seq)
             ) PARTITION BY LIST (ready_slot)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.done_entries (
                 ready_slot        INT NOT NULL,
@@ -3095,12 +3096,12 @@ impl QueueStorage {
                 PRIMARY KEY (ready_slot, queue, priority, enqueue_shard, lane_seq)
             ) PARTITION BY LIST (ready_slot)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.deferred_jobs (
                 job_id            BIGINT PRIMARY KEY,
@@ -3123,32 +3124,32 @@ impl QueueStorage {
                     CHECK (state IN ('scheduled', 'retryable'))
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_deferred_due
                 ON {schema}.deferred_jobs (state, run_at, queue, priority, job_id)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_deferred_job_unique
                 ON {schema}.deferred_jobs (unique_key)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE TABLE IF NOT EXISTS {schema}.dlq_entries (
                 job_id            BIGINT PRIMARY KEY,
@@ -3172,180 +3173,180 @@ impl QueueStorage {
                 original_run_lease BIGINT NOT NULL
             )
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE INDEX IF NOT EXISTS idx_{schema}_dlq_queue_time
                 ON {schema}.dlq_entries (queue, dlq_at DESC)
             "#
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
             for slot in 0..self.queue_slot_count() {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE TABLE IF NOT EXISTS {} PARTITION OF {schema}.ready_entries
                 FOR VALUES IN ({slot})
                 "#,
                     ready_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_ready_{slot}_lane
                     ON {} (queue, priority, lane_seq)
                 "#,
                     ready_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_ready_{slot}_job
                     ON {} (job_id)
                 "#,
                     ready_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE TABLE IF NOT EXISTS {} PARTITION OF {schema}.done_entries
                 FOR VALUES IN ({slot})
                 "#,
                     done_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_done_{slot}_lane
                     ON {} (queue, priority, lane_seq)
                 "#,
                     done_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_done_{slot}_job
                     ON {} (job_id)
                 "#,
                     done_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
             }
 
             for slot in 0..self.lease_slot_count() {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE TABLE IF NOT EXISTS {} PARTITION OF {schema}.leases
                 FOR VALUES IN ({slot})
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_lane
                     ON {} (queue, priority, lane_seq)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_ready_ref
                     ON {} (ready_slot, ready_generation)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_job
                     ON {} (job_id, run_lease)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_callback
                     ON {} (callback_id)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_state_hb
                     ON {} (state, heartbeat_at)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_state_deadline
                     ON {} (state, deadline_at)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
 
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 CREATE INDEX IF NOT EXISTS idx_{schema}_leases_{slot}_state_callback_timeout
                     ON {} (state, callback_timeout_at)
                 "#,
                     lease_child_name(schema, slot)
-                ))
+                )))
                 .execute(pool)
                 .await
                 .map_err(map_sqlx_error)?;
             }
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
             CREATE OR REPLACE FUNCTION {schema}.claim_ready_runtime(
                 p_queue TEXT,
@@ -3591,19 +3592,19 @@ impl QueueStorage {
             $func$
             "#,
                 claimed_cte = claimed_cte
-            ))
+            )))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
 
             for slot in 0..self.queue_slot_count() {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                 INSERT INTO {schema}.queue_ring_slots (slot, generation)
                 VALUES ($1, $2)
                 ON CONFLICT (slot) DO NOTHING
                 "#
-                ))
+                )))
                 .bind(slot as i32)
                 .bind(if slot == 0 { 0_i64 } else { -1_i64 })
                 .execute(pool)
@@ -3612,13 +3613,13 @@ impl QueueStorage {
             }
 
             for slot in 0..self.lease_slot_count() {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                     INSERT INTO {schema}.lease_ring_slots (slot, generation)
                     VALUES ($1, $2)
                     ON CONFLICT (slot) DO NOTHING
                     "#
-                ))
+                )))
                 .bind(slot as i32)
                 .bind(if slot == 0 { 0_i64 } else { -1_i64 })
                 .execute(pool)
@@ -3627,13 +3628,13 @@ impl QueueStorage {
             }
 
             for slot in 0..self.claim_slot_count() {
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                     INSERT INTO {schema}.claim_ring_slots (slot, generation)
                     VALUES ($1, $2)
                     ON CONFLICT (slot) DO NOTHING
                     "#
-                ))
+                )))
                 .bind(slot as i32)
                 .bind(if slot == 0 { 0_i64 } else { -1_i64 })
                 .execute(pool)
@@ -3766,21 +3767,21 @@ impl QueueStorage {
         // parents. `reset()` must clean these out, otherwise the next
         // `prepare_schema()` runs the legacy migration again on top of
         // the freshly-emptied parent and silently re-inserts old rows.
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             "DROP TABLE IF EXISTS {schema}.lease_claims_legacy"
-        ))
+        )))
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             "DROP TABLE IF EXISTS {schema}.lease_claim_closures_legacy"
-        ))
+        )))
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             TRUNCATE
                 {schema}.ready_entries,
@@ -3799,19 +3800,19 @@ impl QueueStorage {
                 {schema}.lease_ring_slots,
                 {schema}.claim_ring_slots
             "#
-        ))
+        )))
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             "ALTER SEQUENCE {schema}.job_id_seq RESTART WITH 1"
-        ))
+        )))
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.queue_ring_state
             SET current_slot = 0,
@@ -3819,13 +3820,13 @@ impl QueueStorage {
                 slot_count = $1
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .bind(self.queue_slot_count() as i32)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.lease_ring_state
             SET current_slot = 0,
@@ -3833,13 +3834,13 @@ impl QueueStorage {
                 slot_count = $1
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .bind(self.lease_slot_count() as i32)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.claim_ring_state
             SET current_slot = 0,
@@ -3847,19 +3848,19 @@ impl QueueStorage {
                 slot_count = $1
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .bind(self.claim_slot_count() as i32)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
         for slot in 0..self.queue_slot_count() {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 INSERT INTO {schema}.queue_ring_slots (slot, generation)
                 VALUES ($1, $2)
                 "#
-            ))
+            )))
             .bind(slot as i32)
             .bind(if slot == 0 { 0_i64 } else { -1_i64 })
             .execute(tx.as_mut())
@@ -3868,12 +3869,12 @@ impl QueueStorage {
         }
 
         for slot in 0..self.lease_slot_count() {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 INSERT INTO {schema}.lease_ring_slots (slot, generation)
                 VALUES ($1, $2)
                 "#
-            ))
+            )))
             .bind(slot as i32)
             .bind(if slot == 0 { 0_i64 } else { -1_i64 })
             .execute(tx.as_mut())
@@ -3882,12 +3883,12 @@ impl QueueStorage {
         }
 
         for slot in 0..self.claim_slot_count() {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 INSERT INTO {schema}.claim_ring_slots (slot, generation)
                 VALUES ($1, $2)
                 "#
-            ))
+            )))
             .bind(slot as i32)
             .bind(if slot == 0 { 0_i64 } else { -1_i64 })
             .execute(tx.as_mut())
@@ -3944,26 +3945,26 @@ impl QueueStorage {
         enqueue_shard: i16,
     ) -> Result<(), AwaError> {
         let schema = self.schema();
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             INSERT INTO {schema}.queue_lanes (queue, priority)
             VALUES ($1, $2)
             ON CONFLICT (queue, priority) DO NOTHING
             "#
-        ))
+        )))
         .bind(queue)
         .bind(priority)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             INSERT INTO {schema}.queue_enqueue_heads (queue, priority, enqueue_shard)
             VALUES ($1, $2, $3)
             ON CONFLICT (queue, priority, enqueue_shard) DO NOTHING
             "#
-        ))
+        )))
         .bind(queue)
         .bind(priority)
         .bind(enqueue_shard)
@@ -3971,13 +3972,13 @@ impl QueueStorage {
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             INSERT INTO {schema}.queue_claim_heads (queue, priority, enqueue_shard)
             VALUES ($1, $2, $3)
             ON CONFLICT (queue, priority, enqueue_shard) DO NOTHING
             "#
-        ))
+        )))
         .bind(queue)
         .bind(priority)
         .bind(enqueue_shard)
@@ -4113,7 +4114,7 @@ impl QueueStorage {
             "#
         );
 
-        let maybe_start: Option<i64> = sqlx::query_scalar(&sql)
+        let maybe_start: Option<i64> = sqlx::query_scalar(audited_sql(sql.clone()))
             .bind(queue)
             .bind(priority)
             .bind(enqueue_shard)
@@ -4136,7 +4137,7 @@ impl QueueStorage {
         self.invalidate_cached_lane(queue, priority, enqueue_shard);
         self.ensure_lane_inserts(tx, queue, priority, enqueue_shard)
             .await?;
-        let start: i64 = sqlx::query_scalar(&sql)
+        let start: i64 = sqlx::query_scalar(audited_sql(sql.clone()))
             .bind(queue)
             .bind(priority)
             .bind(enqueue_shard)
@@ -4152,13 +4153,13 @@ impl QueueStorage {
         tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
     ) -> Result<(i32, i64), AwaError> {
         let schema = self.schema();
-        sqlx::query_as(&format!(
+        sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation
             FROM {schema}.queue_ring_state
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)
@@ -4178,7 +4179,7 @@ impl QueueStorage {
             self.job_id_sequence()
         );
 
-        sqlx::query_scalar(&query)
+        sqlx::query_scalar(audited_sql(query.clone()))
             .bind(count as i32)
             .fetch_all(tx.as_mut())
             .await
@@ -4204,7 +4205,7 @@ impl QueueStorage {
         aging_interval: Duration,
     ) -> Result<Vec<ReadyJobLeaseRow>, AwaError> {
         let schema = self.schema();
-        sqlx::query_as(&format!(
+        sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 ready_slot,
@@ -4233,7 +4234,7 @@ impl QueueStorage {
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             FROM {schema}.claim_ready_runtime($1, $2, $3, $4)
             "#
-        ))
+        )))
         .bind(queue)
         .bind(max_batch)
         .bind(deadline_duration.as_secs_f64())
@@ -4779,7 +4780,7 @@ impl QueueStorage {
         let lane_seqs: Vec<i64> = rows.iter().map(|row| row.lane_seq).collect();
 
         let payload_rows: Vec<(i32, i64, String, i16, i16, i64, serde_json::Value)> =
-            sqlx::query_as(&format!(
+            sqlx::query_as(audited_sql(format!(
                 r#"
                 WITH refs(ready_slot, ready_generation, queue, priority, enqueue_shard, lane_seq) AS (
                     SELECT * FROM unnest($1::int[], $2::bigint[], $3::text[], $4::smallint[], $5::smallint[], $6::bigint[])
@@ -4801,7 +4802,7 @@ impl QueueStorage {
                  AND ready.enqueue_shard = refs.enqueue_shard
                  AND ready.lane_seq = refs.lane_seq
                 "#
-            ))
+            )))
             .bind(&ready_slots)
             .bind(&ready_generations)
             .bind(&queues)
@@ -4942,7 +4943,7 @@ impl QueueStorage {
             pruned_completed_deltas.push(pruned_completed_delta);
         }
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             WITH deltas(queue, priority, pruned_completed_delta) AS (
                 SELECT *
@@ -4968,7 +4969,7 @@ impl QueueStorage {
                 rollups.pruned_completed_count + EXCLUDED.pruned_completed_count
             )
             "#
-        ))
+        )))
         .bind(&queues)
         .bind(&priorities)
         .bind(&pruned_completed_deltas)
@@ -5458,7 +5459,7 @@ impl QueueStorage {
             0
         };
 
-        if let Some(owned) = sqlx::query_as::<_, QueueClaimerLeaseRow>(&format!(
+        if let Some(owned) = sqlx::query_as::<_, QueueClaimerLeaseRow>(audited_sql(format!(
             r#"
             SELECT claimer_slot, lease_epoch, last_claimed_at, expires_at
             FROM {schema}.queue_claimer_leases
@@ -5468,7 +5469,7 @@ impl QueueStorage {
             ORDER BY claimer_slot
             LIMIT 1
             "#
-        ))
+        )))
         .bind(queue)
         .bind(instance_id)
         .bind(now)
@@ -5481,7 +5482,7 @@ impl QueueStorage {
 
         for offset in 0..max_claimers {
             let slot = (probe_start + offset) % max_claimers;
-            if let Some(updated) = sqlx::query_as::<_, QueueClaimerLeaseRow>(&format!(
+            if let Some(updated) = sqlx::query_as::<_, QueueClaimerLeaseRow>(audited_sql(format!(
                 r#"
                 UPDATE {schema}.queue_claimer_leases
                 SET owner_instance_id = $3,
@@ -5501,7 +5502,7 @@ impl QueueStorage {
                   )
                 RETURNING claimer_slot, lease_epoch, last_claimed_at, expires_at
                 "#
-            ))
+            )))
             .bind(queue)
             .bind(slot)
             .bind(instance_id)
@@ -5515,7 +5516,7 @@ impl QueueStorage {
                 return Ok(Some(updated));
             }
 
-            if let Some(inserted) = sqlx::query_as::<_, QueueClaimerLeaseRow>(&format!(
+            if let Some(inserted) = sqlx::query_as::<_, QueueClaimerLeaseRow>(audited_sql(format!(
                 r#"
                 INSERT INTO {schema}.queue_claimer_leases (
                     queue,
@@ -5530,7 +5531,7 @@ impl QueueStorage {
                 ON CONFLICT (queue, claimer_slot) DO NOTHING
                 RETURNING claimer_slot, lease_epoch, last_claimed_at, expires_at
                 "#
-            ))
+            )))
             .bind(queue)
             .bind(slot)
             .bind(instance_id)
@@ -5562,7 +5563,7 @@ impl QueueStorage {
             + TimeDelta::from_std(lease_ttl)
                 .map_err(|err| AwaError::Validation(format!("invalid claimer lease ttl: {err}")))?;
 
-        let result = sqlx::query(&format!(
+        let result = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.queue_claimer_leases
             SET last_claimed_at = $5,
@@ -5572,7 +5573,7 @@ impl QueueStorage {
               AND owner_instance_id = $3
               AND lease_epoch = $4
             "#
-        ))
+        )))
         .bind(queue)
         .bind(lease.claimer_slot)
         .bind(instance_id)
@@ -5650,14 +5651,14 @@ impl QueueStorage {
                 AwaError::Validation(format!("invalid claimer control interval: {err}"))
             })?;
 
-        if let Some(target) = sqlx::query_scalar::<_, i16>(&format!(
+        if let Some(target) = sqlx::query_scalar::<_, i16>(audited_sql(format!(
             r#"
             SELECT target_claimers
             FROM {schema}.queue_claimer_state
             WHERE queue = $1
               AND updated_at > $2
             "#
-        ))
+        )))
         .bind(queue)
         .bind(stale_cutoff)
         .fetch_optional(pool)
@@ -5667,13 +5668,13 @@ impl QueueStorage {
             return Ok(target.clamp(1, max_claimers.max(1)));
         }
 
-        let current_target = sqlx::query_scalar::<_, i16>(&format!(
+        let current_target = sqlx::query_scalar::<_, i16>(audited_sql(format!(
             r#"
             SELECT target_claimers
             FROM {schema}.queue_claimer_state
             WHERE queue = $1
             "#
-        ))
+        )))
         .bind(queue)
         .fetch_optional(pool)
         .await
@@ -5682,7 +5683,7 @@ impl QueueStorage {
         let signal = self.queue_claimer_signal(pool, queue).await?;
         let desired = self.desired_queue_claimer_target(current_target, &signal, max_claimers);
 
-        if let Some(updated) = sqlx::query_scalar::<_, i16>(&format!(
+        if let Some(updated) = sqlx::query_scalar::<_, i16>(audited_sql(format!(
             r#"
             INSERT INTO {schema}.queue_claimer_state (queue, target_claimers, updated_at)
             VALUES ($1, $2, $3)
@@ -5692,7 +5693,7 @@ impl QueueStorage {
             WHERE {schema}.queue_claimer_state.updated_at <= $4
             RETURNING target_claimers
             "#
-        ))
+        )))
         .bind(queue)
         .bind(desired)
         .bind(now)
@@ -5729,7 +5730,7 @@ impl QueueStorage {
     ) -> Result<AvailableSignal, AwaError> {
         let schema = self.schema();
         let queues = self.physical_queues_for_logical(queue);
-        let available: i64 = sqlx::query_scalar(&format!(
+        let available: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT COALESCE(sum(GREATEST(qe.next_seq - qc.claim_seq, 0)), 0)::bigint
             FROM {schema}.queue_enqueue_heads AS qe
@@ -5739,7 +5740,7 @@ impl QueueStorage {
              AND qc.enqueue_shard = qe.enqueue_shard
             WHERE qe.queue = ANY($1)
             "#
-        ))
+        )))
         .bind(&queues)
         .fetch_one(pool)
         .await
@@ -5845,7 +5846,7 @@ impl QueueStorage {
         let enqueue_shards: Vec<i16> = claimed.iter().map(|entry| entry.enqueue_shard).collect();
         let lane_seqs: Vec<i64> = claimed.iter().map(|entry| entry.lane_seq).collect();
 
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH completed(lease_slot, queue, priority, enqueue_shard, lane_seq) AS (
                 SELECT * FROM unnest($1::int[], $2::text[], $3::smallint[], $4::smallint[], $5::bigint[])
@@ -5875,7 +5876,7 @@ impl QueueStorage {
                 leases.callback_id,
                 leases.callback_timeout_at
             "#
-        ))
+        )))
         .bind(&lease_slots)
         .bind(&queues)
         .bind(&priorities)
@@ -5960,7 +5961,7 @@ impl QueueStorage {
                     .iter()
                     .map(|entry| entry.job.run_lease)
                     .collect();
-                let updated: Vec<(i64, i64)> = sqlx::query_as(&format!(
+                let updated: Vec<(i64, i64)> = sqlx::query_as(audited_sql(format!(
                     r#"
                     WITH completed(claim_slot, job_id, run_lease) AS (
                         SELECT * FROM unnest($1::int[], $2::bigint[], $3::bigint[])
@@ -5991,7 +5992,7 @@ impl QueueStorage {
                     SELECT job_id, run_lease
                     FROM inserted
                     "#
-                ))
+                )))
                 .bind(&receipt_claim_slots)
                 .bind(&receipt_job_ids)
                 .bind(&receipt_run_leases)
@@ -6053,7 +6054,7 @@ impl QueueStorage {
                 // CTE-as-DML: delete the leases and the matching attempt_state
                 // rows in one round-trip. See the receipt-disabled branch
                 // below for the same pattern.
-                let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+                let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
                     r#"
                     WITH completed(lease_slot, queue, priority, enqueue_shard, lane_seq, run_lease) AS (
                         SELECT * FROM unnest($1::int[], $2::text[], $3::smallint[], $4::smallint[], $5::bigint[], $6::bigint[])
@@ -6111,7 +6112,7 @@ impl QueueStorage {
                         callback_timeout_at
                     FROM deleted
                     "#
-                ))
+                )))
                 .bind(&lease_slots)
                 .bind(&queues)
                 .bind(&priorities)
@@ -6163,7 +6164,7 @@ impl QueueStorage {
         // attempt-state delete and to the final SELECT), and `del_attempts`
         // hangs off it. Saves one round-trip per completion batch versus
         // issuing the attempt-state delete as a separate statement.
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH completed(lease_slot, queue, priority, enqueue_shard, lane_seq, run_lease) AS (
                 SELECT * FROM unnest($1::int[], $2::text[], $3::smallint[], $4::smallint[], $5::bigint[], $6::bigint[])
@@ -6221,7 +6222,7 @@ impl QueueStorage {
                 callback_timeout_at
             FROM deleted
             "#
-        ))
+        )))
         .bind(&lease_slots)
         .bind(&queues)
         .bind(&priorities)
@@ -6279,7 +6280,7 @@ impl QueueStorage {
             .map(|(_, run_lease)| *run_lease)
             .collect();
 
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH completed(job_id, run_lease) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[])
@@ -6306,7 +6307,7 @@ impl QueueStorage {
                 leases.callback_id,
                 leases.callback_timeout_at
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .fetch_all(tx.as_mut())
@@ -6356,7 +6357,7 @@ impl QueueStorage {
     ) -> Result<QueueCounts, AwaError> {
         let schema = self.schema();
         let queues = self.physical_queues_for_logical(queue);
-        let row: (i64, i64, i64) = sqlx::query_as(&format!(
+        let row: (i64, i64, i64) = sqlx::query_as(audited_sql(format!(
             r#"
             WITH lane_counts AS (
                 -- Exact count: a ready row is available iff its
@@ -6436,7 +6437,7 @@ impl QueueStorage {
             CROSS JOIN live_running
             CROSS JOIN live_terminal
             "#
-        ))
+        )))
         .bind(&queues)
         .fetch_one(pool)
         .await
@@ -6461,7 +6462,7 @@ impl QueueStorage {
         job_id: i64,
     ) -> Result<Option<JobRow>, AwaError> {
         let schema = self.schema();
-        let deleted_waiting: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted_waiting: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id = $1
@@ -6484,7 +6485,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_all(tx.as_mut())
         .await
@@ -6532,7 +6533,7 @@ impl QueueStorage {
             ));
         }
 
-        let terminal: Option<DoneJobRow> = sqlx::query_as(&format!(
+        let terminal: Option<DoneJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.done_entries
             WHERE (job_id, finalized_at) IN (
@@ -6566,7 +6567,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_optional(tx.as_mut())
         .await
@@ -6666,7 +6667,7 @@ impl QueueStorage {
         outcome: &str,
     ) -> Result<(), AwaError> {
         let schema = self.schema();
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             WITH locked_claim AS (
                 SELECT claim_slot, job_id, run_lease
@@ -6679,7 +6680,7 @@ impl QueueStorage {
             FROM locked_claim
             ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
             "#
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .bind(outcome)
@@ -6715,7 +6716,7 @@ impl QueueStorage {
         job_id: i64,
     ) -> Result<Option<JobRow>, AwaError> {
         let schema = self.schema();
-        let ready: Option<ReadyTransitionRow> = sqlx::query_as(&format!(
+        let ready: Option<ReadyTransitionRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.ready_entries
             WHERE (ready_slot, queue, priority, enqueue_shard, lane_seq) IN (
@@ -6756,7 +6757,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_optional(tx.as_mut())
         .await
@@ -6777,7 +6778,7 @@ impl QueueStorage {
             // advancing would skip past those still-claimable rows.
             // The dispatcher's gap-recovery branch absorbs the
             // transient over-count when claim_seq later catches up.
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 UPDATE {schema}.queue_claim_heads
                 SET claim_seq = claim_seq + 1
@@ -6786,7 +6787,7 @@ impl QueueStorage {
                   AND enqueue_shard = $3
                   AND claim_seq = $4
                 "#
-            ))
+            )))
             .bind(&ready.queue)
             .bind(ready.priority)
             .bind(ready.enqueue_shard)
@@ -6797,7 +6798,7 @@ impl QueueStorage {
             return Ok(Some(done.into_job_row()?));
         }
 
-        let deleted_lease: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted_lease: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id = $1
@@ -6820,7 +6821,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_all(tx.as_mut())
         .await
@@ -6869,7 +6870,7 @@ impl QueueStorage {
                 i64,
                 DateTime<Utc>,
             );
-            let receipt: Option<ReceiptCancelRow> = sqlx::query_as(&format!(
+            let receipt: Option<ReceiptCancelRow> = sqlx::query_as(audited_sql(format!(
                 r#"
                     SELECT
                         claims.claim_slot,
@@ -6894,7 +6895,7 @@ impl QueueStorage {
                     LIMIT 1
                     FOR UPDATE OF claims SKIP LOCKED
                     "#
-            ))
+            )))
             .bind(job_id)
             .fetch_optional(tx.as_mut())
             .await
@@ -6915,7 +6916,7 @@ impl QueueStorage {
             {
                 // Hydrate the ready row so we can synthesize the done
                 // row with the original args/payload.
-                let ready_match: Option<ReadyTransitionRow> = sqlx::query_as(&format!(
+                let ready_match: Option<ReadyTransitionRow> = sqlx::query_as(audited_sql(format!(
                     r#"
                     SELECT
                         ready_slot,
@@ -6944,7 +6945,7 @@ impl QueueStorage {
                       AND priority = $5
                       AND lane_seq = $6
                     "#
-                ))
+                )))
                 .bind(job_id)
                 .bind(ready_slot)
                 .bind(ready_generation)
@@ -6987,13 +6988,13 @@ impl QueueStorage {
                 self.insert_done_rows_tx(tx, std::slice::from_ref(&done), Some(JobState::Running))
                     .await?;
                 // Write the closure row into the same claim partition.
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     r#"
                     INSERT INTO {schema}.lease_claim_closures (claim_slot, job_id, run_lease, outcome, closed_at)
                     VALUES ($1, $2, $3, 'cancelled', clock_timestamp())
                     ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
                     "#
-                ))
+                )))
                 .bind(claim_slot)
                 .bind(job_id)
                 .bind(run_lease)
@@ -7010,9 +7011,9 @@ impl QueueStorage {
                 // committed first, that lease is now an orphan pointing
                 // at a job we're about to mark `cancelled`. Sweep it
                 // defensively. If no race occurred this is a no-op.
-                sqlx::query(&format!(
+                sqlx::query(audited_sql(format!(
                     "DELETE FROM {schema}.leases WHERE job_id = $1 AND run_lease = $2"
-                ))
+                )))
                 .bind(job_id)
                 .bind(run_lease)
                 .execute(tx.as_mut())
@@ -7023,7 +7024,7 @@ impl QueueStorage {
             }
         }
 
-        let deferred: Option<DeferredJobRow> = sqlx::query_as(&format!(
+        let deferred: Option<DeferredJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.deferred_jobs
             WHERE job_id = $1
@@ -7046,7 +7047,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_optional(tx.as_mut())
         .await
@@ -7136,7 +7137,7 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let moved: Vec<ReadyTransitionRow> = sqlx::query_as(&format!(
+        let moved: Vec<ReadyTransitionRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.ready_entries
             WHERE (ready_slot, queue, priority, enqueue_shard, lane_seq) IN (
@@ -7178,7 +7179,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(cutoff)
         .bind(limit)
         .fetch_all(tx.as_mut())
@@ -7257,7 +7258,7 @@ impl QueueStorage {
         run_lease: i64,
     ) -> Result<serde_json::Value, AwaError> {
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let mut row: Option<AttemptStateRow> = sqlx::query_as(&format!(
+        let mut row: Option<AttemptStateRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 job_id,
@@ -7274,7 +7275,7 @@ impl QueueStorage {
             FOR UPDATE
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .fetch_optional(tx.as_mut())
@@ -7297,20 +7298,20 @@ impl QueueStorage {
             && row.callback_on_fail.is_none()
             && row.callback_transform.is_none()
         {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 "DELETE FROM {} WHERE job_id = $1 AND run_lease = $2",
                 self.attempt_state_table()
-            ))
+            )))
             .bind(job_id)
             .bind(run_lease)
             .execute(tx.as_mut())
             .await
             .map_err(map_sqlx_error)?;
         } else {
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 "UPDATE {} SET callback_result = NULL, updated_at = clock_timestamp() WHERE job_id = $1 AND run_lease = $2",
                 self.attempt_state_table()
-            ))
+            )))
             .bind(job_id)
             .bind(run_lease)
             .execute(tx.as_mut())
@@ -7373,7 +7374,7 @@ impl QueueStorage {
         let schema = self.schema();
         let job_ids: Vec<i64> = jobs.iter().map(|(job_id, _)| *job_id).collect();
         let run_leases: Vec<i64> = jobs.iter().map(|(_, run_lease)| *run_lease).collect();
-        let inserted: i64 = sqlx::query_scalar(&format!(
+        let inserted: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             WITH inflight(job_id, run_lease) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[])
@@ -7488,7 +7489,7 @@ impl QueueStorage {
             )
             SELECT count(*)::bigint FROM marked
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .fetch_one(tx.as_mut())
@@ -7522,7 +7523,7 @@ impl QueueStorage {
         let schema = self.schema();
         let job_ids: Vec<i64> = jobs.iter().map(|(job_id, _)| *job_id).collect();
         let run_leases: Vec<i64> = jobs.iter().map(|(_, run_lease)| *run_lease).collect();
-        let updated: i64 = sqlx::query_scalar(&format!(
+        let updated: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             WITH inflight(job_id, run_lease) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[])
@@ -7563,7 +7564,7 @@ impl QueueStorage {
             )
             SELECT count(*)::bigint FROM upserted
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .fetch_one(tx.as_mut())
@@ -7588,7 +7589,7 @@ impl QueueStorage {
             .iter()
             .map(|(_, _, progress)| progress.clone())
             .collect();
-        let updated: i64 = sqlx::query_scalar(&format!(
+        let updated: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             WITH inflight(job_id, run_lease, progress) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[], $3::jsonb[])
@@ -7641,7 +7642,7 @@ impl QueueStorage {
             )
             SELECT count(*)::bigint FROM upserted
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .bind(&progress)
@@ -7670,7 +7671,7 @@ impl QueueStorage {
         let job_ids: Vec<i64> = deleted.iter().map(|row| row.job_id).collect();
         let run_leases: Vec<i64> = deleted.iter().map(|row| row.run_lease).collect();
 
-        let ready_rows: Vec<ReadySnapshotRow> = sqlx::query_as(&format!(
+        let ready_rows: Vec<ReadySnapshotRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH refs(ready_slot, ready_generation, queue, priority, enqueue_shard, lane_seq) AS (
                 SELECT * FROM unnest($1::int[], $2::bigint[], $3::text[], $4::smallint[], $5::smallint[], $6::bigint[])
@@ -7699,7 +7700,7 @@ impl QueueStorage {
              AND ready.enqueue_shard = refs.enqueue_shard
              AND ready.lane_seq = refs.lane_seq
             "#
-        ))
+        )))
         .bind(&ready_slots)
         .bind(&ready_generations)
         .bind(&queues)
@@ -7710,7 +7711,7 @@ impl QueueStorage {
         .await
         .map_err(map_sqlx_error)?;
 
-        let attempt_rows: Vec<AttemptStateRow> = sqlx::query_as(&format!(
+        let attempt_rows: Vec<AttemptStateRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH refs(job_id, run_lease) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[])
@@ -7729,7 +7730,7 @@ impl QueueStorage {
                 attempt.callback_transform,
                 attempt.callback_result
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .fetch_all(tx.as_mut())
@@ -7750,7 +7751,7 @@ impl QueueStorage {
         // retryable / failed / completed. Write the closure here so
         // the receipt plane mirrors the lease plane: when the lease
         // is gone, the receipt is gone too.
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             WITH refs(job_id, run_lease) AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[])
@@ -7765,7 +7766,7 @@ impl QueueStorage {
              AND refs.run_lease = claims.run_lease
             ON CONFLICT (claim_slot, job_id, run_lease) DO NOTHING
             "#
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .execute(tx.as_mut())
@@ -7852,7 +7853,7 @@ impl QueueStorage {
         }
 
         let schema = self.schema();
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH target AS (
                 -- Target is the open claim identified from the
@@ -7912,7 +7913,7 @@ impl QueueStorage {
               ON inserted.job_id = target.job_id
              AND inserted.run_lease = target.run_lease
             "#
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .bind(outcome)
@@ -7943,7 +7944,7 @@ impl QueueStorage {
         }
 
         let schema = self.schema();
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id = $1
@@ -7967,7 +7968,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .fetch_all(tx.as_mut())
@@ -7988,7 +7989,7 @@ impl QueueStorage {
         cutoff: DateTime<Utc>,
     ) -> Result<Vec<DeletedLeaseRow>, AwaError> {
         let schema = self.schema();
-        let rescued: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let rescued: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH stale_claims AS (
                 -- Rescue scans partitioned lease_claims anti-joined
@@ -8059,7 +8060,7 @@ impl QueueStorage {
               ON inserted.job_id = stale_claims.job_id
              AND inserted.run_lease = stale_claims.run_lease
             "#
-        ))
+        )))
         .bind(cutoff)
         .fetch_all(tx.as_mut())
         .await
@@ -8083,7 +8084,7 @@ impl QueueStorage {
         tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
     ) -> Result<Vec<DeletedLeaseRow>, AwaError> {
         let schema = self.schema();
-        let rescued: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let rescued: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             WITH expired_claims AS (
                 SELECT
@@ -8148,7 +8149,7 @@ impl QueueStorage {
               ON inserted.job_id = expired_claims.job_id
              AND inserted.run_lease = expired_claims.run_lease
             "#
-        ))
+        )))
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -8159,7 +8160,7 @@ impl QueueStorage {
         let schema = self.schema();
         let mut candidates = Vec::new();
 
-        let ready_rows: Vec<ReadyJobRow> = sqlx::query_as(&format!(
+        let ready_rows: Vec<ReadyJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 job_id,
@@ -8180,7 +8181,7 @@ impl QueueStorage {
             WHERE job_id = $1
             ORDER BY run_lease DESC, attempted_at DESC NULLS LAST, run_at DESC
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8189,7 +8190,7 @@ impl QueueStorage {
             candidates.push(row.into_job_row()?);
         }
 
-        let deferred_rows: Vec<DeferredJobRow> = sqlx::query_as(&format!(
+        let deferred_rows: Vec<DeferredJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 job_id,
@@ -8211,7 +8212,7 @@ impl QueueStorage {
             FROM {schema}.deferred_jobs
             WHERE job_id = $1
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8220,7 +8221,7 @@ impl QueueStorage {
             candidates.push(row.into_job_row()?);
         }
 
-        let lease_rows: Vec<LeaseJobRow> = sqlx::query_as(&format!(
+        let lease_rows: Vec<LeaseJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 lease.ready_slot,
@@ -8266,7 +8267,7 @@ impl QueueStorage {
             WHERE lease.job_id = $1
             ORDER BY lease.run_lease DESC
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8277,7 +8278,7 @@ impl QueueStorage {
 
         // Report receipt-backed attempts as running by anti-joining
         // lease_claims against lease_claim_closures.
-        let lease_claim_rows: Vec<LeaseJobRow> = sqlx::query_as(&format!(
+        let lease_claim_rows: Vec<LeaseJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 claims.ready_slot,
@@ -8362,7 +8363,7 @@ impl QueueStorage {
               )
             ORDER BY claims.run_lease DESC
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8371,7 +8372,7 @@ impl QueueStorage {
             candidates.push(row.into_job_row()?);
         }
 
-        let done_rows: Vec<DoneJobRow> = sqlx::query_as(&format!(
+        let done_rows: Vec<DoneJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 done.ready_slot,
@@ -8405,7 +8406,7 @@ impl QueueStorage {
             WHERE done.job_id = $1
             ORDER BY done.run_lease DESC, done.finalized_at DESC
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8414,7 +8415,7 @@ impl QueueStorage {
             candidates.push(row.into_job_row()?);
         }
 
-        let dlq_rows: Vec<DlqJobRow> = sqlx::query_as(&format!(
+        let dlq_rows: Vec<DlqJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 job_id,
@@ -8440,7 +8441,7 @@ impl QueueStorage {
             WHERE job_id = $1
             ORDER BY dlq_at DESC
             "#,
-        ))
+        )))
         .bind(job_id)
         .fetch_all(pool)
         .await
@@ -8469,7 +8470,7 @@ impl QueueStorage {
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
         self.ensure_mutable_running_attempt_tx(&mut tx, job_id, run_lease)
             .await?;
-        let updated = sqlx::query(&format!(
+        let updated = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_id = $2,
@@ -8479,7 +8480,7 @@ impl QueueStorage {
               AND run_lease = $4
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(job_id)
         .bind(callback_id)
         .bind(timeout.as_secs_f64())
@@ -8493,7 +8494,7 @@ impl QueueStorage {
             return Err(AwaError::Validation("job is not in running state".into()));
         }
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_filter = NULL,
@@ -8505,14 +8506,14 @@ impl QueueStorage {
               AND run_lease = $2
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             DELETE FROM {}
             WHERE job_id = $1
@@ -8525,7 +8526,7 @@ impl QueueStorage {
               AND callback_transform IS NULL
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .execute(tx.as_mut())
@@ -8592,7 +8593,7 @@ impl QueueStorage {
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
         self.ensure_mutable_running_attempt_tx(&mut tx, job_id, run_lease)
             .await?;
-        let updated = sqlx::query(&format!(
+        let updated = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_id = $2,
@@ -8602,7 +8603,7 @@ impl QueueStorage {
               AND run_lease = $4
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(job_id)
         .bind(callback_id)
         .bind(timeout.as_secs_f64())
@@ -8616,7 +8617,7 @@ impl QueueStorage {
             return Err(AwaError::Validation("job is not in running state".into()));
         }
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             INSERT INTO {} (
                 job_id,
@@ -8637,7 +8638,7 @@ impl QueueStorage {
                 updated_at = clock_timestamp()
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .bind(&config.filter)
@@ -8659,7 +8660,7 @@ impl QueueStorage {
         run_lease: i64,
     ) -> Result<bool, AwaError> {
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let result = sqlx::query(&format!(
+        let result = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_id = NULL,
@@ -8670,7 +8671,7 @@ impl QueueStorage {
               AND run_lease = $2
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .execute(tx.as_mut())
@@ -8681,7 +8682,7 @@ impl QueueStorage {
             return Ok(false);
         }
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_filter = NULL,
@@ -8693,14 +8694,14 @@ impl QueueStorage {
               AND run_lease = $2
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             DELETE FROM {}
             WHERE job_id = $1
@@ -8713,7 +8714,7 @@ impl QueueStorage {
               AND callback_transform IS NULL
             "#,
             self.attempt_state_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .execute(tx.as_mut())
@@ -8731,7 +8732,7 @@ impl QueueStorage {
         run_lease: i64,
         callback_id: Uuid,
     ) -> Result<bool, AwaError> {
-        let result = sqlx::query(&format!(
+        let result = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {}
             SET state = 'waiting_external',
@@ -8743,7 +8744,7 @@ impl QueueStorage {
               AND callback_id = $3
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .bind(callback_id)
@@ -8760,7 +8761,7 @@ impl QueueStorage {
         callback_id: Uuid,
     ) -> Result<CallbackPollResult, AwaError> {
         let row: Option<(JobState, Option<Uuid>, i64, Option<serde_json::Value>)> =
-            sqlx::query_as(&format!(
+            sqlx::query_as(audited_sql(format!(
                 r#"
                 SELECT
                     lease.state,
@@ -8777,7 +8778,7 @@ impl QueueStorage {
                 "#,
                 self.leases_table(),
                 self.attempt_state_table()
-            ))
+            )))
             .bind(job_id)
             .fetch_optional(pool)
             .await
@@ -8823,7 +8824,7 @@ impl QueueStorage {
         callback_id: Uuid,
         run_lease: Option<i64>,
     ) -> Result<Option<JobRow>, AwaError> {
-        let row: Option<LeaseJobRow> = sqlx::query_as(&format!(
+        let row: Option<LeaseJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT
                 lease.ready_slot,
@@ -8873,7 +8874,7 @@ impl QueueStorage {
             "#,
             self.leases_table(),
             schema = self.schema()
-        ))
+        )))
         .bind(callback_id)
         .bind(run_lease)
         .fetch_optional(pool)
@@ -8894,7 +8895,7 @@ impl QueueStorage {
     ) -> Result<JobRow, AwaError> {
         if resume {
             let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-            let resumed: Option<(i64, i64)> = sqlx::query_as(&format!(
+            let resumed: Option<(i64, i64)> = sqlx::query_as(audited_sql(format!(
                 r#"
                 UPDATE {}
                 SET state = 'running',
@@ -8907,7 +8908,7 @@ impl QueueStorage {
                 RETURNING job_id, run_lease
                 "#,
                 self.leases_table()
-            ))
+            )))
             .bind(callback_id)
             .bind(run_lease)
             .fetch_optional(tx.as_mut())
@@ -8921,7 +8922,7 @@ impl QueueStorage {
                 });
             };
 
-            sqlx::query(&format!(
+            sqlx::query(audited_sql(format!(
                 r#"
                 INSERT INTO {} (
                     job_id,
@@ -8944,7 +8945,7 @@ impl QueueStorage {
                     updated_at = clock_timestamp()
                 "#,
                 self.attempt_state_table()
-            ))
+            )))
             .bind(job_id)
             .bind(run_lease)
             .bind(payload.unwrap_or(serde_json::Value::Null))
@@ -8964,7 +8965,7 @@ impl QueueStorage {
 
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE callback_id = $1
@@ -8988,7 +8989,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(callback_id)
         .bind(run_lease)
         .fetch_all(tx.as_mut())
@@ -9045,7 +9046,7 @@ impl QueueStorage {
     ) -> Result<JobRow, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE callback_id = $1
@@ -9069,7 +9070,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(callback_id)
         .bind(run_lease)
         .fetch_all(tx.as_mut())
@@ -9125,7 +9126,7 @@ impl QueueStorage {
     ) -> Result<JobRow, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE callback_id = $1
@@ -9149,7 +9150,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(callback_id)
         .bind(run_lease)
         .fetch_all(tx.as_mut())
@@ -9203,7 +9204,7 @@ impl QueueStorage {
         callback_id: Uuid,
         timeout: Duration,
     ) -> Result<JobRow, AwaError> {
-        let updated: Option<(i64, i64)> = sqlx::query_as(&format!(
+        let updated: Option<(i64, i64)> = sqlx::query_as(audited_sql(format!(
             r#"
             UPDATE {}
             SET callback_timeout_at = clock_timestamp() + make_interval(secs => $2)
@@ -9212,7 +9213,7 @@ impl QueueStorage {
             RETURNING job_id, run_lease
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(callback_id)
         .bind(timeout.as_secs_f64())
         .fetch_optional(pool)
@@ -9247,7 +9248,7 @@ impl QueueStorage {
             )
             .await?;
         }
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             INSERT INTO {} (job_id, run_lease, progress, updated_at)
             SELECT lease.job_id, lease.run_lease, $3, clock_timestamp()
@@ -9262,7 +9263,7 @@ impl QueueStorage {
             "#,
             self.attempt_state_table(),
             self.leases_table()
-        ))
+        )))
         .bind(job_id)
         .bind(run_lease)
         .bind(progress)
@@ -9291,7 +9292,7 @@ impl QueueStorage {
                 .upsert_attempt_state_from_receipts_tx(&mut tx, jobs)
                 .await?;
         }
-        let result = sqlx::query(&format!(
+        let result = sqlx::query(audited_sql(format!(
             r#"
             WITH inflight AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[]) AS v(job_id, run_lease)
@@ -9307,7 +9308,7 @@ impl QueueStorage {
             self.leases_table(),
             self.leases_table(),
             self.leases_table()
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .execute(tx.as_mut())
@@ -9338,7 +9339,7 @@ impl QueueStorage {
                 .upsert_attempt_state_progress_from_receipts_tx(&mut tx, jobs)
                 .await?;
         }
-        let lease_updated: i64 = sqlx::query_scalar(&format!(
+        let lease_updated: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             WITH inflight AS (
                 SELECT * FROM unnest($1::bigint[], $2::bigint[], $3::jsonb[]) AS v(job_id, run_lease, progress)
@@ -9364,7 +9365,7 @@ impl QueueStorage {
             SELECT count(*)::bigint FROM updated
             "#,
             self.leases_table()
-        ))
+        )))
         .bind(&job_ids)
         .bind(&run_leases)
         .bind(&progress)
@@ -9555,7 +9556,7 @@ impl QueueStorage {
     ) -> Result<Option<JobRow>, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let moved: Option<DoneJobRow> = sqlx::query_as(&format!(
+        let moved: Option<DoneJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.done_entries
             WHERE (job_id, finalized_at) IN (
@@ -9589,7 +9590,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_optional(tx.as_mut())
         .await
@@ -9623,7 +9624,7 @@ impl QueueStorage {
     ) -> Result<u64, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let moved: Vec<DoneJobRow> = sqlx::query_as(&format!(
+        let moved: Vec<DoneJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.done_entries
             WHERE state = 'failed'
@@ -9651,7 +9652,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(kind)
         .bind(queue)
         .fetch_all(tx.as_mut())
@@ -9682,7 +9683,7 @@ impl QueueStorage {
     ) -> Result<Option<JobRow>, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let moved: Option<DlqJobRow> = sqlx::query_as(&format!(
+        let moved: Option<DlqJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.dlq_entries
             WHERE job_id = $1
@@ -9707,7 +9708,7 @@ impl QueueStorage {
                 dlq_at,
                 original_run_lease
             "#
-        ))
+        )))
         .bind(job_id)
         .fetch_optional(tx.as_mut())
         .await
@@ -9770,7 +9771,7 @@ impl QueueStorage {
     ) -> Result<u64, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let moved: Vec<DlqJobRow> = sqlx::query_as(&format!(
+        let moved: Vec<DlqJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.dlq_entries
             WHERE ($1::text IS NULL OR kind = $1)
@@ -9807,7 +9808,7 @@ impl QueueStorage {
                 dlq_at,
                 original_run_lease
             "#
-        ))
+        )))
         .bind(&filter.kind)
         .bind(&filter.queue)
         .bind(&filter.tag)
@@ -9851,7 +9852,7 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let deleted_done: Vec<DoneJobRow> = sqlx::query_as(&format!(
+        let deleted_done: Vec<DoneJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.done_entries
             WHERE kind = $1
@@ -9878,13 +9879,13 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(kind)
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        let deleted_dlq: Vec<DlqJobRow> = sqlx::query_as(&format!(
+        let deleted_dlq: Vec<DlqJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.dlq_entries
             WHERE kind = $1
@@ -9909,7 +9910,7 @@ impl QueueStorage {
                 dlq_at,
                 original_run_lease
             "#
-        ))
+        )))
         .bind(kind)
         .fetch_all(tx.as_mut())
         .await
@@ -10002,7 +10003,7 @@ impl QueueStorage {
         let cutoff = Utc::now()
             - TimeDelta::from_std(staleness)
                 .map_err(|err| AwaError::Validation(format!("invalid staleness: {err}")))?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id IN (
@@ -10032,7 +10033,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .bind(cutoff)
         .fetch_all(tx.as_mut())
         .await
@@ -10105,7 +10106,7 @@ impl QueueStorage {
     pub async fn rescue_expired_deadlines(&self, pool: &PgPool) -> Result<Vec<JobRow>, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id IN (
@@ -10136,7 +10137,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10193,7 +10194,7 @@ impl QueueStorage {
     pub async fn rescue_expired_callbacks(&self, pool: &PgPool) -> Result<Vec<JobRow>, AwaError> {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(&format!(
+        let deleted: Vec<DeletedLeaseRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.leases
             WHERE job_id IN (
@@ -10224,7 +10225,7 @@ impl QueueStorage {
                 callback_id,
                 callback_timeout_at
             "#
-        ))
+        )))
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10284,7 +10285,7 @@ impl QueueStorage {
 
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
-        let moved: Vec<DeferredJobRow> = sqlx::query_as(&format!(
+        let moved: Vec<DeferredJobRow> = sqlx::query_as(audited_sql(format!(
             r#"
             DELETE FROM {schema}.deferred_jobs
             WHERE job_id IN (
@@ -10318,7 +10319,7 @@ impl QueueStorage {
                 unique_states,
                 COALESCE(payload, '{{}}'::jsonb) AS payload
             "#
-        ))
+        )))
         .bind(state)
         .bind(batch_size)
         .fetch_all(tx.as_mut())
@@ -10366,30 +10367,30 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let state: (i32, i64, i32) = sqlx::query_as(&format!(
+        let state: (i32, i64, i32) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation, slot_count
             FROM {schema}.queue_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
         let next_slot = (state.0 + 1).rem_euclid(state.2);
-        let ready_count: i64 = sqlx::query_scalar(&format!(
+        let ready_count: i64 = sqlx::query_scalar(audited_sql(format!(
             "SELECT count(*)::bigint FROM {}",
             ready_child_name(schema, next_slot as usize)
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
-        let done_count: i64 = sqlx::query_scalar(&format!(
+        let done_count: i64 = sqlx::query_scalar(audited_sql(format!(
             "SELECT count(*)::bigint FROM {}",
             done_child_name(schema, next_slot as usize)
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10408,27 +10409,27 @@ impl QueueStorage {
 
         let next_generation = state.1 + 1;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.queue_ring_state
             SET current_slot = $1,
                 generation = $2
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .bind(next_slot)
         .bind(next_generation)
         .execute(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        sqlx::query(&format!(
+        sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.queue_ring_slots
             SET generation = $2
             WHERE slot = $1
             "#
-        ))
+        )))
         .bind(next_slot)
         .bind(next_generation)
         .execute(tx.as_mut())
@@ -10453,23 +10454,23 @@ impl QueueStorage {
         // wastes work. `RotateLeasesPlan` in
         // `correctness/storage/AwaStorageLockOrder.tla` requires this
         // lock as the first acquired resource for the rotation tx.
-        let state: (i32, i64, i32) = sqlx::query_as(&format!(
+        let state: (i32, i64, i32) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation, slot_count
             FROM {schema}.lease_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
         let next_slot = (state.0 + 1).rem_euclid(state.2);
-        let lease_count: i64 = sqlx::query_scalar(&format!(
+        let lease_count: i64 = sqlx::query_scalar(audited_sql(format!(
             "SELECT count(*)::bigint FROM {}",
             lease_child_name(schema, next_slot as usize)
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10487,7 +10488,7 @@ impl QueueStorage {
 
         let next_generation = state.1 + 1;
 
-        let rotated = sqlx::query(&format!(
+        let rotated = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.lease_ring_state
             SET current_slot = $1,
@@ -10496,7 +10497,7 @@ impl QueueStorage {
               AND current_slot = $3
               AND generation = $4
             "#
-        ))
+        )))
         .bind(next_slot)
         .bind(next_generation)
         .bind(state.0)
@@ -10531,19 +10532,19 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let state: (i32,) = sqlx::query_as(&format!(
+        let state: (i32,) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot
             FROM {schema}.queue_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        let target: Option<(i32, i64)> = sqlx::query_as(&format!(
+        let target: Option<(i32, i64)> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT slot, generation
             FROM {schema}.queue_ring_slots
@@ -10553,7 +10554,7 @@ impl QueueStorage {
             LIMIT 1
             FOR UPDATE
             "#
-        ))
+        )))
         .bind(state.0)
         .fetch_optional(tx.as_mut())
         .await
@@ -10572,9 +10573,9 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-        let lock_tables = sqlx::query(&format!(
+        let lock_tables = sqlx::query(audited_sql(format!(
             "LOCK TABLE {ready_child}, {done_child} IN ACCESS EXCLUSIVE MODE"
-        ))
+        )))
         .execute(tx.as_mut())
         .await;
 
@@ -10583,14 +10584,14 @@ impl QueueStorage {
             return Ok(PruneOutcome::Blocked { slot });
         }
 
-        let active_leases: i64 = sqlx::query_scalar(&format!(
+        let active_leases: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT count(*)::bigint
             FROM {schema}.leases
             WHERE ready_slot = $1
               AND ready_generation = $2
             "#
-        ))
+        )))
         .bind(slot)
         .bind(generation)
         .fetch_one(tx.as_mut())
@@ -10606,7 +10607,7 @@ impl QueueStorage {
             });
         }
 
-        let pending: i64 = sqlx::query_scalar(&format!(
+        let pending: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT count(*)::bigint
             FROM {ready_child} AS ready
@@ -10618,7 +10619,7 @@ impl QueueStorage {
              AND done.lane_seq = ready.lane_seq
             WHERE done.lane_seq IS NULL
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10632,20 +10633,22 @@ impl QueueStorage {
             });
         }
 
-        let pruned_terminal_counts: Vec<(String, i16, i64)> = sqlx::query_as(&format!(
+        let pruned_terminal_counts: Vec<(String, i16, i64)> = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT queue, priority, count(*)::bigint AS pruned_count
             FROM {done_child}
             GROUP BY queue, priority
             "#
-        ))
+        )))
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        let truncate = sqlx::query(&format!("TRUNCATE TABLE {ready_child}, {done_child}",))
-            .execute(tx.as_mut())
-            .await;
+        let truncate = sqlx::query(audited_sql(format!(
+            "TRUNCATE TABLE {ready_child}, {done_child}",
+        )))
+        .execute(tx.as_mut())
+        .await;
 
         match truncate {
             Ok(_) => {
@@ -10676,14 +10679,14 @@ impl QueueStorage {
         // the cursor under the prune's liveness check (current_slot
         // recheck races a CAS update) and prune what should be the
         // active partition.
-        let state: (i32, i64, i32) = sqlx::query_as(&format!(
+        let state: (i32, i64, i32) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation, slot_count
             FROM {schema}.lease_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10694,13 +10697,13 @@ impl QueueStorage {
             return Ok(PruneOutcome::Noop);
         };
 
-        let slot_locked: Option<i32> = sqlx::query_scalar(&format!(
+        let slot_locked: Option<i32> = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT slot FROM {schema}.lease_ring_slots
             WHERE slot = $1
             FOR UPDATE
             "#
-        ))
+        )))
         .bind(slot)
         .fetch_optional(tx.as_mut())
         .await
@@ -10718,9 +10721,9 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-        let lock_table = sqlx::query(&format!(
+        let lock_table = sqlx::query(audited_sql(format!(
             "LOCK TABLE {lease_child} IN ACCESS EXCLUSIVE MODE"
-        ))
+        )))
         .execute(tx.as_mut())
         .await;
 
@@ -10729,13 +10732,13 @@ impl QueueStorage {
             return Ok(PruneOutcome::Blocked { slot });
         }
 
-        let current_slot: i32 = sqlx::query_scalar(&format!(
+        let current_slot: i32 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT current_slot
             FROM {schema}.lease_ring_state
             WHERE singleton = TRUE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10749,11 +10752,12 @@ impl QueueStorage {
             });
         }
 
-        let active_leases: i64 =
-            sqlx::query_scalar(&format!("SELECT count(*)::bigint FROM {lease_child}"))
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_sqlx_error)?;
+        let active_leases: i64 = sqlx::query_scalar(audited_sql(format!(
+            "SELECT count(*)::bigint FROM {lease_child}"
+        )))
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_sqlx_error)?;
 
         if active_leases > 0 {
             tx.commit().await.map_err(map_sqlx_error)?;
@@ -10764,7 +10768,7 @@ impl QueueStorage {
             });
         }
 
-        let truncate = sqlx::query(&format!("TRUNCATE TABLE {lease_child}"))
+        let truncate = sqlx::query(audited_sql(format!("TRUNCATE TABLE {lease_child}")))
             .execute(tx.as_mut())
             .await;
 
@@ -10781,7 +10785,7 @@ impl QueueStorage {
     }
 
     pub async fn vacuum_leases(&self, pool: &PgPool) -> Result<(), AwaError> {
-        sqlx::query(&format!("VACUUM {}", self.leases_table()))
+        sqlx::query(audited_sql(format!("VACUUM {}", self.leases_table())))
             .execute(pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -10801,14 +10805,14 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let state: (i32, i64, i32) = sqlx::query_as(&format!(
+        let state: (i32, i64, i32) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation, slot_count
             FROM {schema}.claim_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10821,18 +10825,18 @@ impl QueueStorage {
         // mix fresh claims with legacy rows and defeat the point of
         // partitioning. Non-empty `lease_claim_closures_<next>` means
         // prune fell behind on closures specifically.
-        let claim_count: i64 = sqlx::query_scalar(&format!(
+        let claim_count: i64 = sqlx::query_scalar(audited_sql(format!(
             "SELECT count(*)::bigint FROM {}",
             claim_child_name(schema, next_slot as usize)
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
 
-        let closure_count: i64 = sqlx::query_scalar(&format!(
+        let closure_count: i64 = sqlx::query_scalar(audited_sql(format!(
             "SELECT count(*)::bigint FROM {}",
             closure_child_name(schema, next_slot as usize)
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10851,7 +10855,7 @@ impl QueueStorage {
 
         let next_generation = state.1 + 1;
 
-        let rotated = sqlx::query(&format!(
+        let rotated = sqlx::query(audited_sql(format!(
             r#"
             UPDATE {schema}.claim_ring_state
             SET current_slot = $1,
@@ -10860,7 +10864,7 @@ impl QueueStorage {
               AND current_slot = $3
               AND generation = $4
             "#
-        ))
+        )))
         .bind(next_slot)
         .bind(next_generation)
         .bind(state.0)
@@ -10918,14 +10922,14 @@ impl QueueStorage {
         let schema = self.schema();
         let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
 
-        let state: (i32, i64, i32) = sqlx::query_as(&format!(
+        let state: (i32, i64, i32) = sqlx::query_as(audited_sql(format!(
             r#"
             SELECT current_slot, generation, slot_count
             FROM {schema}.claim_ring_state
             WHERE singleton = TRUE
             FOR UPDATE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10938,13 +10942,13 @@ impl QueueStorage {
 
         // Lock the slot row so concurrent rotate/prune observe the same
         // state machine transition.
-        let slot_locked: Option<i32> = sqlx::query_scalar(&format!(
+        let slot_locked: Option<i32> = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT slot FROM {schema}.claim_ring_slots
             WHERE slot = $1
             FOR UPDATE
             "#
-        ))
+        )))
         .bind(slot)
         .fetch_optional(tx.as_mut())
         .await
@@ -10963,9 +10967,9 @@ impl QueueStorage {
             .await
             .map_err(map_sqlx_error)?;
 
-        let lock_tables = sqlx::query(&format!(
+        let lock_tables = sqlx::query(audited_sql(format!(
             "LOCK TABLE {claim_child}, {closure_child} IN ACCESS EXCLUSIVE MODE"
-        ))
+        )))
         .execute(tx.as_mut())
         .await;
 
@@ -10977,11 +10981,11 @@ impl QueueStorage {
         // After taking ACCESS EXCLUSIVE, recheck that the slot is not
         // the current one (rotate may have won the ring-state lock
         // earlier).
-        let current_slot: i32 = sqlx::query_scalar(&format!(
+        let current_slot: i32 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT current_slot FROM {schema}.claim_ring_state WHERE singleton = TRUE
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -10999,7 +11003,7 @@ impl QueueStorage {
         // have a matching closure. Any open claim means a worker is
         // still running (or a rescue hasn't fired yet); we bail and let
         // normal lifecycle drain the partition.
-        let open_claims: i64 = sqlx::query_scalar(&format!(
+        let open_claims: i64 = sqlx::query_scalar(audited_sql(format!(
             r#"
             SELECT count(*)::bigint
             FROM {claim_child} AS claims
@@ -11010,7 +11014,7 @@ impl QueueStorage {
                   AND closures.run_lease = claims.run_lease
             )
             "#
-        ))
+        )))
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_sqlx_error)?;
@@ -11024,9 +11028,11 @@ impl QueueStorage {
             });
         }
 
-        let truncate = sqlx::query(&format!("TRUNCATE TABLE {claim_child}, {closure_child}"))
-            .execute(tx.as_mut())
-            .await;
+        let truncate = sqlx::query(audited_sql(format!(
+            "TRUNCATE TABLE {claim_child}, {closure_child}"
+        )))
+        .execute(tx.as_mut())
+        .await;
 
         match truncate {
             Ok(_) => {
