@@ -1080,7 +1080,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ..Default::default()
                         })?;
                         if reset {
-                            sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+                            sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
                                 .execute(&pool)
                                 .await?;
                         }

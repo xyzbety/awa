@@ -86,7 +86,7 @@ async fn ensure_migration_database() {
     .await
     .expect("Failed to check migration database existence");
     if !exists {
-        sqlx::raw_sql("CREATE DATABASE awa_migration_test")
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("CREATE DATABASE awa_migration_test").to_owned()))
             .execute(&mut admin)
             .await
             .expect("Failed to create migration test database");
@@ -105,7 +105,7 @@ async fn pool() -> PgPool {
 
 /// Drop and recreate the awa schema for a clean migration test.
 async fn reset_schema(pool: &PgPool) {
-    sqlx::raw_sql("DROP SCHEMA IF EXISTS awa CASCADE")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("DROP SCHEMA IF EXISTS awa CASCADE").to_owned()))
         .execute(pool)
         .await
         .expect("Failed to drop schema");
@@ -152,7 +152,7 @@ async fn simulate_non_canonical_compat_routing(pool: &PgPool) {
 }
 
 async fn install_queue_storage_backend(pool: &PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(pool)
         .await
         .expect("queue storage test schema should drop cleanly");
@@ -166,7 +166,7 @@ async fn install_queue_storage_backend(pool: &PgPool, schema: &str) {
 }
 
 async fn prepare_queue_storage_schema(pool: &PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(pool)
         .await
         .expect("queue storage test schema should drop cleanly");
@@ -196,13 +196,13 @@ fn assert_safe_generated_role_name(role: &str) {
 
 async fn create_login_role(pool: &PgPool, role: &str) {
     assert_safe_generated_role_name(role);
-    sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
         .execute(pool)
         .await
         .expect("test role should be dropped before create");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE {role} LOGIN PASSWORD 'awa_test_password'"
-    ))
+    )))
     .execute(pool)
     .await
     .expect("test role should be created");
@@ -210,7 +210,7 @@ async fn create_login_role(pool: &PgPool, role: &str) {
 
 async fn drop_login_role(pool: &PgPool, role: &str) {
     assert_safe_generated_role_name(role);
-    let _ = sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
+    let _ = sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
         .execute(pool)
         .await;
 }
@@ -222,7 +222,7 @@ async fn grant_runtime_privileges(pool: &PgPool, role: &str, include_truncate: b
     } else {
         "SELECT, INSERT, UPDATE, DELETE"
     };
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe((format!(
         r#"
         GRANT CONNECT ON DATABASE awa_migration_test TO {role};
         GRANT USAGE ON SCHEMA awa TO {role};
@@ -231,7 +231,7 @@ async fn grant_runtime_privileges(pool: &PgPool, role: &str, include_truncate: b
         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA awa TO {role};
         REVOKE EXECUTE ON FUNCTION awa.install_queue_storage_substrate(TEXT, INT, INT, INT, BOOLEAN) FROM {role};
         "#
-    ))
+    )).to_owned()))
     .execute(pool)
     .await
     .expect("runtime grants should apply");
@@ -429,22 +429,20 @@ async fn test_step_through_upgrade_preserves_data() {
     let v1_sql = migrations::migration_sql();
     let (v1_version, _, v1_up) = &v1_sql[0];
     assert_eq!(*v1_version, 1);
-    sqlx::raw_sql(v1_up).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe((v1_up).to_owned())).execute(&pool).await.unwrap();
 
     let version = migrations::current_version(&pool).await.unwrap();
     assert_eq!(version, 1);
 
-    sqlx::raw_sql(
-        r#"
-        INSERT INTO awa.jobs (kind, queue, args, state, priority)
-        VALUES ('test_job', 'migration_test', '{"key": "value"}'::jsonb, 'available', 2);
-
-        INSERT INTO awa.cron_jobs (name, cron_expr, kind, queue)
-        VALUES ('test_cron', '* * * * *', 'test_job', 'migration_test');
-
-        INSERT INTO awa.queue_meta (queue, paused) VALUES ('migration_test', false);
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    INSERT INTO awa.jobs (kind, queue, args, state, priority)
+    VALUES ('test_job', 'migration_test', '{"key": "value"}'::jsonb, 'available', 2);
+    
+    INSERT INTO awa.cron_jobs (name, cron_expr, kind, queue)
+    VALUES ('test_cron', '* * * * *', 'test_job', 'migration_test');
+    
+    INSERT INTO awa.queue_meta (queue, paused) VALUES ('migration_test', false);
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();
@@ -532,7 +530,7 @@ async fn test_step_through_upgrade_preserves_data() {
         "V4 backfill should capture existing jobs"
     );
 
-    sqlx::raw_sql("DELETE FROM awa.jobs WHERE queue = 'migration_test'; DELETE FROM awa.cron_jobs WHERE name = 'test_cron'; DELETE FROM awa.queue_meta WHERE queue = 'migration_test'")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("DELETE FROM awa.jobs WHERE queue = 'migration_test'; DELETE FROM awa.cron_jobs WHERE name = 'test_cron'; DELETE FROM awa.queue_meta WHERE queue = 'migration_test'").to_owned()))
         .execute(&pool)
         .await
         .unwrap();
@@ -557,7 +555,7 @@ async fn test_migration_sql_matches_run() {
 
     reset_schema(&pool).await;
     for (_version, _desc, sql) in migrations::migration_sql() {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(&pool).await.unwrap();
     }
 
     let tables_from_sql: Vec<String> = sqlx::query_scalar(
@@ -582,52 +580,50 @@ async fn test_v023_migrates_legacy_default_queue_storage_tables() {
     reset_schema(&pool).await;
 
     for (_version, _desc, sql) in migrations::migration_sql_range(0, 22) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(&pool).await.unwrap();
     }
 
-    sqlx::raw_sql(
-        r#"
-        CREATE TABLE awa.open_receipt_claims (job_id bigint);
-        CREATE TABLE awa.queue_count_snapshots (queue text);
-        CREATE TABLE awa.lease_claims (
-            job_id           BIGINT NOT NULL,
-            run_lease        BIGINT NOT NULL,
-            ready_slot       INT NOT NULL,
-            ready_generation BIGINT NOT NULL,
-            queue            TEXT NOT NULL,
-            priority         SMALLINT NOT NULL,
-            attempt          SMALLINT NOT NULL,
-            max_attempts     SMALLINT NOT NULL,
-            lane_seq         BIGINT NOT NULL,
-            enqueue_shard    SMALLINT NOT NULL DEFAULT 0,
-            claimed_at       TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            materialized_at  TIMESTAMPTZ,
-            deadline_at      TIMESTAMPTZ
-        );
-        CREATE TABLE awa.lease_claim_closures (
-            job_id    BIGINT NOT NULL,
-            run_lease BIGINT NOT NULL,
-            outcome   TEXT NOT NULL,
-            closed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-        );
-
-        INSERT INTO awa.lease_claims (
-            job_id, run_lease, ready_slot, ready_generation, queue, priority,
-            attempt, max_attempts, lane_seq, enqueue_shard, claimed_at,
-            materialized_at, deadline_at
-        )
-        SELECT
-            gs, 1, 0, 0, 'legacy_default', 2::smallint,
-            0::smallint, 25::smallint, gs, (gs % 2)::smallint,
-            clock_timestamp(), NULL::timestamptz,
-            TIMESTAMPTZ '2030-01-01 00:00:00+00'
-        FROM generate_series(1, 5) AS gs;
-
-        INSERT INTO awa.lease_claim_closures (job_id, run_lease, outcome, closed_at)
-        SELECT gs, 1, 'completed', clock_timestamp()
-        FROM generate_series(1, 2) AS gs;
-        "#,
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    CREATE TABLE awa.open_receipt_claims (job_id bigint);
+    CREATE TABLE awa.queue_count_snapshots (queue text);
+    CREATE TABLE awa.lease_claims (
+        job_id           BIGINT NOT NULL,
+        run_lease        BIGINT NOT NULL,
+        ready_slot       INT NOT NULL,
+        ready_generation BIGINT NOT NULL,
+        queue            TEXT NOT NULL,
+        priority         SMALLINT NOT NULL,
+        attempt          SMALLINT NOT NULL,
+        max_attempts     SMALLINT NOT NULL,
+        lane_seq         BIGINT NOT NULL,
+        enqueue_shard    SMALLINT NOT NULL DEFAULT 0,
+        claimed_at       TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        materialized_at  TIMESTAMPTZ,
+        deadline_at      TIMESTAMPTZ
+    );
+    CREATE TABLE awa.lease_claim_closures (
+        job_id    BIGINT NOT NULL,
+        run_lease BIGINT NOT NULL,
+        outcome   TEXT NOT NULL,
+        closed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+    
+    INSERT INTO awa.lease_claims (
+        job_id, run_lease, ready_slot, ready_generation, queue, priority,
+        attempt, max_attempts, lane_seq, enqueue_shard, claimed_at,
+        materialized_at, deadline_at
     )
+    SELECT
+        gs, 1, 0, 0, 'legacy_default', 2::smallint,
+        0::smallint, 25::smallint, gs, (gs % 2)::smallint,
+        clock_timestamp(), NULL::timestamptz,
+        TIMESTAMPTZ '2030-01-01 00:00:00+00'
+    FROM generate_series(1, 5) AS gs;
+    
+    INSERT INTO awa.lease_claim_closures (job_id, run_lease, outcome, closed_at)
+    SELECT gs, 1, 'completed', clock_timestamp()
+    FROM generate_series(1, 2) AS gs;
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();
@@ -704,35 +700,33 @@ async fn test_v027_rebuckets_existing_terminal_live_counts() {
     reset_schema(&pool).await;
 
     for (_version, _desc, sql) in migrations::migration_sql_range(0, 26) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(&pool).await.unwrap();
     }
 
-    sqlx::raw_sql(
-        r#"
-        INSERT INTO awa.done_entries (
-            ready_slot, ready_generation, job_id, kind, queue, state,
-            priority, attempt, run_lease, lane_seq, enqueue_shard,
-            attempted_at, finalized_at, payload
-        ) VALUES
-            (0, 0, 1001, 'migration_job', 'v27_rebucket', 'completed'::awa.job_state,
-             2::smallint, 1::smallint, 1::bigint, 1::bigint, 0::smallint,
-             now(), now(), '{}'::jsonb),
-            (0, 0, 1002, 'migration_job', 'v27_rebucket', 'completed'::awa.job_state,
-             2::smallint, 1::smallint, 1::bigint, 2::bigint, 0::smallint,
-             now(), now(), '{}'::jsonb);
-
-        TRUNCATE TABLE awa.queue_terminal_live_counts;
-        INSERT INTO awa.queue_terminal_live_counts (
-            ready_slot, queue, priority, enqueue_shard, counter_bucket, live_terminal_count
-        ) VALUES (
-            0, 'v27_rebucket', 2::smallint, 0::smallint, 0::smallint, 2::bigint
-        );
-
-        UPDATE awa.queue_ring_state
-        SET terminal_counter_trusted_at = now()
-        WHERE singleton = TRUE;
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    INSERT INTO awa.done_entries (
+        ready_slot, ready_generation, job_id, kind, queue, state,
+        priority, attempt, run_lease, lane_seq, enqueue_shard,
+        attempted_at, finalized_at, payload
+    ) VALUES
+        (0, 0, 1001, 'migration_job', 'v27_rebucket', 'completed'::awa.job_state,
+         2::smallint, 1::smallint, 1::bigint, 1::bigint, 0::smallint,
+         now(), now(), '{}'::jsonb),
+        (0, 0, 1002, 'migration_job', 'v27_rebucket', 'completed'::awa.job_state,
+         2::smallint, 1::smallint, 1::bigint, 2::bigint, 0::smallint,
+         now(), now(), '{}'::jsonb);
+    
+    TRUNCATE TABLE awa.queue_terminal_live_counts;
+    INSERT INTO awa.queue_terminal_live_counts (
+        ready_slot, queue, priority, enqueue_shard, counter_bucket, live_terminal_count
+    ) VALUES (
+        0, 'v27_rebucket', 2::smallint, 0::smallint, 0::smallint, 2::bigint
+    );
+    
+    UPDATE awa.queue_ring_state
+    SET terminal_counter_trusted_at = now()
+    WHERE singleton = TRUE;
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();
@@ -778,30 +772,26 @@ async fn test_legacy_version_upgrade() {
     reset_schema(&pool).await;
 
     let v1_sql = &migrations::migration_sql()[0].2;
-    sqlx::raw_sql(v1_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe((v1_sql).to_owned())).execute(&pool).await.unwrap();
 
-    sqlx::raw_sql(
-        r#"
-        DELETE FROM awa.schema_version;
-        INSERT INTO awa.schema_version (version, description) VALUES (3, 'Legacy V3');
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    DELETE FROM awa.schema_version;
+    INSERT INTO awa.schema_version (version, description) VALUES (3, 'Legacy V3');
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();
 
     let v2_sql = &migrations::migration_sql()[1].2;
     let v3_sql = &migrations::migration_sql()[2].2;
-    sqlx::raw_sql(v2_sql).execute(&pool).await.unwrap();
-    sqlx::raw_sql(v3_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe((v2_sql).to_owned())).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe((v3_sql).to_owned())).execute(&pool).await.unwrap();
 
-    sqlx::raw_sql(
-        r#"
-        DELETE FROM awa.schema_version WHERE version IN (2, 3);
-        INSERT INTO awa.schema_version (version, description) VALUES (4, 'Legacy V4');
-        INSERT INTO awa.schema_version (version, description) VALUES (5, 'Legacy V5');
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    DELETE FROM awa.schema_version WHERE version IN (2, 3);
+    INSERT INTO awa.schema_version (version, description) VALUES (4, 'Legacy V4');
+    INSERT INTO awa.schema_version (version, description) VALUES (5, 'Legacy V5');
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();
@@ -851,7 +841,7 @@ async fn test_migration_sql_range_produces_valid_schema() {
 
     // Apply only V1+V2 via range, then verify V2 artifacts exist but V3+ don't.
     for (_version, _desc, sql) in migrations::migration_sql_range(0, 2) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(&pool).await.unwrap();
     }
 
     let has_runtime: bool = sqlx::query_scalar(
@@ -872,7 +862,7 @@ async fn test_migration_sql_range_produces_valid_schema() {
 
     // Now apply V3+V4 via range and verify.
     for (_version, _desc, sql) in migrations::migration_sql_range(2, migrations::CURRENT_VERSION) {
-        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(&pool).await.unwrap();
     }
 
     let has_maintenance: bool = sqlx::query_scalar(
@@ -1082,31 +1072,29 @@ async fn test_v031_backfills_queue_storage_failed_done_metric_index() {
     prepare_queue_storage_schema(&pool, schema).await;
 
     let index_name = format!("idx_{schema}_done_0_failed_queue");
-    sqlx::query(&format!("DROP INDEX IF EXISTS {schema}.{index_name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP INDEX IF EXISTS {schema}.{index_name}")))
         .execute(&pool)
         .await
         .expect("failed done_entries test index should drop cleanly");
 
-    sqlx::raw_sql(
-        r#"
-        DROP SCHEMA IF EXISTS awa_queue_storage_v031_partial CASCADE;
-        CREATE SCHEMA awa_queue_storage_v031_partial;
-        CREATE TABLE awa_queue_storage_v031_partial.queue_ring_state (
-            singleton BOOLEAN PRIMARY KEY,
-            slot_count INT NOT NULL
-        );
-        INSERT INTO awa_queue_storage_v031_partial.queue_ring_state
-            (singleton, slot_count)
-        VALUES (TRUE, 1);
-        CREATE TABLE awa_queue_storage_v031_partial.done_entries (
-            ready_slot INT NOT NULL,
-            queue TEXT NOT NULL
-        ) PARTITION BY LIST (ready_slot);
-        CREATE TABLE awa_queue_storage_v031_partial.done_entries_0
-            PARTITION OF awa_queue_storage_v031_partial.done_entries
-            FOR VALUES IN (0);
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    DROP SCHEMA IF EXISTS awa_queue_storage_v031_partial CASCADE;
+    CREATE SCHEMA awa_queue_storage_v031_partial;
+    CREATE TABLE awa_queue_storage_v031_partial.queue_ring_state (
+        singleton BOOLEAN PRIMARY KEY,
+        slot_count INT NOT NULL
+    );
+    INSERT INTO awa_queue_storage_v031_partial.queue_ring_state
+        (singleton, slot_count)
+    VALUES (TRUE, 1);
+    CREATE TABLE awa_queue_storage_v031_partial.done_entries (
+        ready_slot INT NOT NULL,
+        queue TEXT NOT NULL
+    ) PARTITION BY LIST (ready_slot);
+    CREATE TABLE awa_queue_storage_v031_partial.done_entries_0
+        PARTITION OF awa_queue_storage_v031_partial.done_entries
+        FOR VALUES IN (0);
+    "#).to_owned()))
     .execute(&pool)
     .await
     .expect("partial queue-storage probe schema should be creatable");
@@ -1120,9 +1108,9 @@ async fn test_v031_backfills_queue_storage_failed_done_metric_index() {
         .await
         .expect("v031 should rerun cleanly");
 
-    let has_done_failed_index: bool = sqlx::query_scalar(&format!(
+    let has_done_failed_index: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT to_regclass('{schema}.{index_name}') IS NOT NULL"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("failed done_entries index probe should succeed");
@@ -1165,31 +1153,29 @@ async fn test_v032_backfills_queue_storage_pruned_failed_rollup_column() {
     prepare_queue_storage_schema(&pool, schema).await;
 
     // Simulate a substrate prepared by a pre-v032 binary.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER TABLE {schema}.queue_terminal_rollups DROP COLUMN pruned_failed_count"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("pruned_failed_count test column should drop cleanly");
 
     // A look-alike schema without the claim function must be skipped by
     // the substrate discovery filter.
-    sqlx::raw_sql(
-        r#"
-        DROP SCHEMA IF EXISTS awa_queue_storage_v032_partial CASCADE;
-        CREATE SCHEMA awa_queue_storage_v032_partial;
-        CREATE TABLE awa_queue_storage_v032_partial.queue_ring_state (
-            singleton BOOLEAN PRIMARY KEY,
-            slot_count INT NOT NULL
-        );
-        CREATE TABLE awa_queue_storage_v032_partial.queue_terminal_rollups (
-            queue TEXT NOT NULL,
-            priority SMALLINT NOT NULL,
-            pruned_completed_count BIGINT NOT NULL DEFAULT 0,
-            PRIMARY KEY (queue, priority)
-        );
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    DROP SCHEMA IF EXISTS awa_queue_storage_v032_partial CASCADE;
+    CREATE SCHEMA awa_queue_storage_v032_partial;
+    CREATE TABLE awa_queue_storage_v032_partial.queue_ring_state (
+        singleton BOOLEAN PRIMARY KEY,
+        slot_count INT NOT NULL
+    );
+    CREATE TABLE awa_queue_storage_v032_partial.queue_terminal_rollups (
+        queue TEXT NOT NULL,
+        priority SMALLINT NOT NULL,
+        pruned_completed_count BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (queue, priority)
+    );
+    "#).to_owned()))
     .execute(&pool)
     .await
     .expect("partial queue-storage probe schema should be creatable");
@@ -1234,7 +1220,7 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
         "freshly prepared queue-storage schema should be ready"
     );
 
-    sqlx::query(&format!("DROP SEQUENCE {schema}.job_id_seq CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SEQUENCE {schema}.job_id_seq CASCADE")))
         .execute(&pool)
         .await
         .expect("test sequence drop should succeed");
@@ -1247,9 +1233,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP SEQUENCE {schema}.lease_claim_receipt_id_seq CASCADE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test receipt sequence drop should succeed");
@@ -1262,9 +1248,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP SEQUENCE {schema}.lease_claim_batch_id_seq CASCADE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test compact claim batch sequence drop should succeed");
@@ -1277,7 +1263,7 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!("DROP TABLE {schema}.ready_tombstones CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {schema}.ready_tombstones CASCADE")))
         .execute(&pool)
         .await
         .expect("test ready_tombstones drop should succeed");
@@ -1290,9 +1276,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP TABLE {schema}.receipt_completion_batches CASCADE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test receipt_completion_batches drop should succeed");
@@ -1305,7 +1291,7 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!("DROP TABLE {schema}.lease_claim_batches CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {schema}.lease_claim_batches CASCADE")))
         .execute(&pool)
         .await
         .expect("test lease_claim_batches drop should succeed");
@@ -1318,9 +1304,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP TABLE {schema}.receipt_completion_tombstones CASCADE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test receipt_completion_tombstones drop should succeed");
@@ -1333,9 +1319,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP TABLE {schema}.queue_terminal_count_deltas CASCADE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test queue_terminal_count_deltas drop should succeed");
@@ -1348,9 +1334,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER TABLE {schema}.lease_claim_closure_batches DROP COLUMN receipt_ranges"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test receipt_ranges drop should succeed");
@@ -1363,9 +1349,9 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP FUNCTION {schema}.claim_ready_runtime(text, bigint, double precision, double precision)"
-    ))
+    )))
         .execute(&pool)
         .await
         .expect("test claim function drop should succeed");
@@ -1378,13 +1364,13 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
     );
 
     prepare_queue_storage_schema(&pool, schema).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP FUNCTION {schema}.claim_ready_runtime(text, bigint, double precision, double precision)"
-    ))
+    )))
         .execute(&pool)
         .await
         .expect("test claim function drop before stub should succeed");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         CREATE FUNCTION {schema}.claim_ready_runtime(
             p_queue TEXT,
@@ -1398,7 +1384,7 @@ async fn test_queue_storage_schema_ready_requires_sequence_and_claim_function() 
             SELECT NULL::bigint WHERE FALSE
         $$;
         "#
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("test stale claim function create should succeed");
@@ -1420,7 +1406,7 @@ async fn test_prepare_schema_preserves_trusted_terminal_counter_marker_on_curren
     migrations::run(&pool).await.unwrap();
 
     let schema = "awa_queue_storage_trusted_marker";
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("queue storage test schema should drop cleanly");
@@ -1431,7 +1417,7 @@ async fn test_prepare_schema_preserves_trusted_terminal_counter_marker_on_curren
         .await
         .expect("queue storage schema preparation should succeed");
 
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe((format!(
         r#"
         INSERT INTO {schema}.done_entries (
             ready_slot, ready_generation, job_id, kind, queue, state,
@@ -1443,17 +1429,17 @@ async fn test_prepare_schema_preserves_trusted_terminal_counter_marker_on_curren
             'completed'::awa.job_state, 2::smallint, 1::smallint,
             1::bigint, 1::bigint, 0::smallint, now(), now(), '{{}}'::jsonb
         );
-
+    
         INSERT INTO {schema}.queue_terminal_live_counts (
             ready_slot, queue, priority, enqueue_shard, counter_bucket, live_terminal_count
         )
         VALUES (0, 'trusted_marker', 2::smallint, 0::smallint, 1::smallint, 1);
-
+    
         UPDATE {schema}.queue_ring_state
         SET terminal_counter_trusted_at = now()
         WHERE singleton = TRUE;
         "#
-    ))
+    )).to_owned()))
     .execute(&pool)
     .await
     .expect("seed current-shape terminal counters");
@@ -1463,10 +1449,10 @@ async fn test_prepare_schema_preserves_trusted_terminal_counter_marker_on_curren
         .await
         .expect("idempotent prepare_schema should succeed");
 
-    let trusted: bool = sqlx::query_scalar(&format!(
+    let trusted: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT terminal_counter_trusted_at IS NOT NULL \
          FROM {schema}.queue_ring_state WHERE singleton = TRUE"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("trust marker query should succeed");
@@ -1486,7 +1472,7 @@ async fn test_v030_preserves_untrusted_terminal_counter_marker_on_empty_schema()
     migrations::run(&pool).await.unwrap();
 
     let schema = "awa_queue_storage_untrusted_marker";
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("queue storage test schema should drop cleanly");
@@ -1497,26 +1483,26 @@ async fn test_v030_preserves_untrusted_terminal_counter_marker_on_empty_schema()
         .await
         .expect("queue storage schema preparation should succeed");
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {schema}.queue_ring_state \
          SET terminal_counter_trusted_at = NULL \
          WHERE singleton = TRUE"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("clear trust marker");
 
     for (_version, _desc, sql) in migrations::migration_sql_range(29, 30) {
-        sqlx::raw_sql(&sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned()))
             .execute(&pool)
             .await
             .expect("v030 migration should rerun cleanly");
     }
 
-    let trusted: bool = sqlx::query_scalar(&format!(
+    let trusted: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT terminal_counter_trusted_at IS NOT NULL \
          FROM {schema}.queue_ring_state WHERE singleton = TRUE"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("trust marker query should succeed");
@@ -2314,9 +2300,9 @@ async fn test_insert_job_compat_routes_under_active_queue_storage_engine() {
     assert_eq!(row.queue, "compat_refusal_queue");
     assert_eq!(row.state, awa::JobState::Available);
 
-    let lane_seq: i64 = sqlx::query_scalar(&format!(
+    let lane_seq: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT lane_seq FROM {schema}.ready_entries WHERE job_id = $1"
-    ))
+    )))
     .bind(row.id)
     .fetch_one(&pool)
     .await
@@ -2326,9 +2312,9 @@ async fn test_insert_job_compat_routes_under_active_queue_storage_engine() {
         "insert_job_compat must reserve queue-storage lanes through the sequence allocator"
     );
 
-    let ready_segments: i64 = sqlx::query_scalar(&format!(
+    let ready_segments: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*)::bigint FROM {schema}.ready_segments WHERE queue = $1"
-    ))
+    )))
     .bind("compat_refusal_queue")
     .fetch_one(&pool)
     .await
@@ -2713,14 +2699,12 @@ async fn test_legacy_v3_only_upgrade() {
     reset_schema(&pool).await;
 
     let v1_sql = &migrations::migration_sql()[0].2;
-    sqlx::raw_sql(v1_sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe((v1_sql).to_owned())).execute(&pool).await.unwrap();
 
-    sqlx::raw_sql(
-        r#"
-        DELETE FROM awa.schema_version;
-        INSERT INTO awa.schema_version (version, description) VALUES (3, 'Legacy V3 only');
-        "#,
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+    DELETE FROM awa.schema_version;
+    INSERT INTO awa.schema_version (version, description) VALUES (3, 'Legacy V3 only');
+    "#).to_owned()))
     .execute(&pool)
     .await
     .unwrap();

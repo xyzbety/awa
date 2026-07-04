@@ -111,11 +111,11 @@ async fn apply_receipt_plane_fillfactor_helper_restores_reset_partitions() {
     let pool = migrated_pool().await;
     let schema = format!("awa_fillfactor_test_{}", uuid::Uuid::new_v4().simple());
 
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("clean any prior schema");
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&pool)
         .await
         .expect("create test schema");
@@ -150,14 +150,14 @@ async fn apply_receipt_plane_fillfactor_helper_restores_reset_partitions() {
         "expected at least one partition under {schema}"
     );
     for name in &partition_names {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {name} RESET ( \
              fillfactor, \
              autovacuum_vacuum_scale_factor, \
              autovacuum_vacuum_threshold, \
              autovacuum_vacuum_cost_limit, \
              autovacuum_vacuum_cost_delay)"
-        ))
+        )))
         .execute(&pool)
         .await
         .expect("reset partition reloptions");
@@ -224,7 +224,7 @@ async fn apply_receipt_plane_fillfactor_helper_restores_reset_partitions() {
         );
     }
 
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("cleanup test schema");
@@ -265,7 +265,7 @@ async fn prepare_schema_reapplies_receipt_plane_fillfactor_on_reprepare() {
     })
     .expect("construct QueueStorage");
 
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("clean any prior schema");
@@ -296,14 +296,14 @@ async fn prepare_schema_reapplies_receipt_plane_fillfactor_on_reprepare() {
     .expect("list partitions");
     assert!(!partition_names.is_empty(), "expected partitions");
     for name in &partition_names {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {name} RESET ( \
              fillfactor, \
              autovacuum_vacuum_scale_factor, \
              autovacuum_vacuum_threshold, \
              autovacuum_vacuum_cost_limit, \
              autovacuum_vacuum_cost_delay)"
-        ))
+        )))
         .execute(&pool)
         .await
         .expect("reset partition reloptions");
@@ -370,7 +370,7 @@ async fn prepare_schema_reapplies_receipt_plane_fillfactor_on_reprepare() {
         );
     }
 
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("cleanup test schema");
@@ -388,41 +388,41 @@ async fn apply_receipt_plane_fillfactor_skips_non_awa_schemas() {
     let pool = migrated_pool().await;
     let schema = format!("app_owned_test_{}", uuid::Uuid::new_v4().simple());
 
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("clean any prior schema");
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&pool)
         .await
         .expect("create app-owned schema");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE {schema}.leases ( \
          lease_slot INT NOT NULL, id BIGINT NOT NULL, \
          PRIMARY KEY (lease_slot, id) \
          ) PARTITION BY LIST (lease_slot)"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("create lookalike leases parent");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE {schema}.leases_0 PARTITION OF {schema}.leases FOR VALUES IN (0)"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("create lookalike leases partition");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE {schema}.lease_claims ( \
          claim_slot INT NOT NULL, id BIGINT NOT NULL, \
          PRIMARY KEY (claim_slot, id) \
          ) PARTITION BY LIST (claim_slot)"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("create lookalike lease_claims parent");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE {schema}.lease_claims_0 PARTITION OF {schema}.lease_claims FOR VALUES IN (0)"
-    ))
+    )))
     .execute(&pool)
     .await
     .expect("create lookalike lease_claims partition");
@@ -455,7 +455,7 @@ async fn apply_receipt_plane_fillfactor_skips_non_awa_schemas() {
          schema that lacks the AWA claim_ready_runtime sentinel"
     );
 
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("cleanup lookalike schema");

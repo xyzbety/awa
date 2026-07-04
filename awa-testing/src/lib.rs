@@ -247,9 +247,9 @@ impl TestClient {
         let target_queue = match queue {
             Some(queue) => queue.to_string(),
             None => {
-                let resolved: Option<String> = sqlx::query_scalar(&format!(
+                let resolved: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT queue FROM {schema}.ready_entries WHERE kind = $1 ORDER BY job_id ASC LIMIT 1"
-                ))
+                )))
                 .bind(worker.kind())
                 .fetch_optional(&self.pool)
                 .await?;

@@ -100,7 +100,7 @@ async fn pool() -> sqlx::PgPool {
 }
 
 async fn drop_schema(pool: &sqlx::PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(pool)
         .await
         .expect("Failed to drop schema");
@@ -130,9 +130,9 @@ async fn sample_per_partition_dead_tup(
 }
 
 async fn ring_state(pool: &sqlx::PgPool, schema: &str, ring: &str) -> (i32, i64) {
-    sqlx::query_as::<_, (i32, i64)>(&format!(
+    sqlx::query_as::<_, (i32, i64)>(sqlx::AssertSqlSafe(format!(
         "SELECT current_slot, generation FROM {schema}.{ring}_ring_state WHERE singleton = TRUE"
-    ))
+    )))
     .fetch_one(pool)
     .await
     .expect("ring state read failed")

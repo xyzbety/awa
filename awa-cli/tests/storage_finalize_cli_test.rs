@@ -74,7 +74,7 @@ async fn ensure_test_database() {
             .expect("check db existence");
     if !exists {
         // CREATE DATABASE does not support bind parameters.
-        sqlx::raw_sql(&format!("CREATE DATABASE {TEST_DB_NAME}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe((format!("CREATE DATABASE {TEST_DB_NAME}")).to_owned()))
             .execute(&mut admin)
             .await
             .expect("create finalize cli test db");
@@ -110,20 +110,20 @@ async fn pool() -> PgPool {
 }
 
 async fn reset_schema(pool: &PgPool) {
-    sqlx::raw_sql("DROP SCHEMA IF EXISTS awa CASCADE")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("DROP SCHEMA IF EXISTS awa CASCADE").to_owned()))
         .execute(pool)
         .await
         .expect("drop awa schema");
     // Also clean up any prepared queue-storage schemas this test
     // might have left over from a previous run.
-    sqlx::raw_sql("DROP SCHEMA IF EXISTS awa_finalize_cli_qs CASCADE")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("DROP SCHEMA IF EXISTS awa_finalize_cli_qs CASCADE").to_owned()))
         .execute(pool)
         .await
         .expect("drop queue storage schema");
 }
 
 async fn prepare_queue_storage_schema(pool: &PgPool, schema: &str) {
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(pool)
         .await
         .expect("drop qs schema");

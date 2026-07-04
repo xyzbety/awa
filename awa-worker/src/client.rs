@@ -2037,7 +2037,7 @@ impl Client {
         let leader = self.leader.load(Ordering::SeqCst);
         let effective_storage = self.effective_storage.read().await.clone();
         let available_rows = if let Some(store) = effective_storage.queue_storage_store() {
-            sqlx::query_as::<_, (String, i64)>(&format!(
+            sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(format!(
                 r#"
                 SELECT
                     enqueues.queue,
@@ -2060,7 +2060,7 @@ impl Client {
                 store.schema(),
                 store.schema(),
                 store.schema()
-            ))
+            )))
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default()
@@ -2496,7 +2496,7 @@ mod tests {
             .await
             .expect("Failed to connect to admin database for client tests");
         let create_sql = format!("CREATE DATABASE {database_name}");
-        match sqlx::query(&create_sql).execute(&admin_pool).await {
+        match sqlx::query(sqlx::AssertSqlSafe(create_sql)).execute(&admin_pool).await {
             Ok(_) => {}
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {}
@@ -2516,7 +2516,7 @@ mod tests {
     }
 
     async fn reset_schema(pool: &PgPool) {
-        sqlx::raw_sql("DROP SCHEMA IF EXISTS awa CASCADE")
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("DROP SCHEMA IF EXISTS awa CASCADE").to_owned()))
             .execute(pool)
             .await
             .expect("Failed to drop awa schema");
@@ -2524,13 +2524,13 @@ mod tests {
 
     async fn apply_migrations_through(pool: &PgPool, version: i32) {
         for (_version, _desc, sql) in migrations::migration_sql_range(0, version) {
-            sqlx::raw_sql(&sql).execute(pool).await.unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_owned())).execute(pool).await.unwrap();
         }
     }
 
     async fn drop_queue_storage_schema(pool: &PgPool, schema: &str) {
         let sql = format!("DROP SCHEMA IF EXISTS {schema} CASCADE");
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(pool)
             .await
             .expect("Failed to drop queue storage schema");
@@ -2741,7 +2741,7 @@ mod tests {
         );
         let start = Instant::now();
         loop {
-            let done: bool = sqlx::query_scalar(&sql)
+            let done: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.clone()))
                 .bind(job_id)
                 .fetch_one(pool)
                 .await
@@ -2980,25 +2980,23 @@ mod tests {
             .await
             .expect("fresh 0.6 schema install should succeed");
 
-        sqlx::raw_sql(
-            r#"
-            CREATE OR REPLACE FUNCTION awa.install_queue_storage_substrate(
-                p_schema TEXT,
-                p_queue_slot_count INT DEFAULT 16,
-                p_lease_slot_count INT DEFAULT 8,
-                p_claim_slot_count INT DEFAULT 8,
-                p_lease_claim_receipts BOOLEAN DEFAULT TRUE
-            )
-            RETURNS VOID
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                RAISE EXCEPTION 'prepare_schema should not run when default queue-storage substrate is already ready'
-                    USING ERRCODE = '55000';
-            END
-            $$;
-            "#,
+        sqlx::raw_sql(sqlx::AssertSqlSafe((r#"
+        CREATE OR REPLACE FUNCTION awa.install_queue_storage_substrate(
+            p_schema TEXT,
+            p_queue_slot_count INT DEFAULT 16,
+            p_lease_slot_count INT DEFAULT 8,
+            p_claim_slot_count INT DEFAULT 8,
+            p_lease_claim_receipts BOOLEAN DEFAULT TRUE
         )
+        RETURNS VOID
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'prepare_schema should not run when default queue-storage substrate is already ready'
+                USING ERRCODE = '55000';
+        END
+        $$;
+        "#).to_owned()))
         .execute(&pool)
         .await
         .expect("failed to poison queue-storage helper");

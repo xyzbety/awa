@@ -163,7 +163,7 @@ async fn queue_state_counts(pool: &sqlx::PgPool, queue: &str) -> HashMap<String,
              ) AS counts \
              GROUP BY state"
         );
-        let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(queue)
             .fetch_all(pool)
             .await
@@ -325,7 +325,7 @@ async fn kind_state_count(pool: &sqlx::PgPool, queue: &str, kind: &str, state: &
                 ) AS running_jobs
                 "#,
             );
-            return sqlx::query_scalar(&sql)
+            return sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(queue)
                 .bind(kind)
                 .fetch_one(pool)
@@ -394,7 +394,7 @@ async fn backdate_running_kind(pool: &sqlx::PgPool, queue: &str, kind: &str) -> 
               )
             "#,
         );
-        let receipt_rows = sqlx::query(&receipt_sql)
+        let receipt_rows = sqlx::query(sqlx::AssertSqlSafe(receipt_sql))
             .bind(queue)
             .bind(kind)
             .execute(pool)
@@ -423,7 +423,7 @@ async fn backdate_running_kind(pool: &sqlx::PgPool, queue: &str, kind: &str) -> 
               AND leases.state = 'running'
             "#,
         );
-        let lease_rows = sqlx::query(&lease_sql)
+        let lease_rows = sqlx::query(sqlx::AssertSqlSafe(lease_sql))
             .bind(queue)
             .bind(kind)
             .execute(pool)
@@ -486,7 +486,7 @@ async fn backdate_running_jobs(pool: &sqlx::PgPool, queue: &str) -> u64 {
               )
             "#,
         );
-        let receipt_rows = sqlx::query(&receipt_sql)
+        let receipt_rows = sqlx::query(sqlx::AssertSqlSafe(receipt_sql))
             .bind(queue)
             .execute(pool)
             .await
@@ -505,7 +505,7 @@ async fn backdate_running_jobs(pool: &sqlx::PgPool, queue: &str) -> u64 {
               AND state = 'running'
             "#,
         );
-        let lease_rows = sqlx::query(&lease_sql)
+        let lease_rows = sqlx::query(sqlx::AssertSqlSafe(lease_sql))
             .bind(queue)
             .execute(pool)
             .await
@@ -542,7 +542,7 @@ async fn backdate_retryable_kind(pool: &sqlx::PgPool, queue: &str, kind: &str) -
               AND state = 'retryable'
             "#,
         );
-        return sqlx::query(&sql)
+        return sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(queue)
             .bind(kind)
             .execute(pool)
@@ -578,7 +578,7 @@ async fn backdate_callback_timeouts(pool: &sqlx::PgPool, queue: &str) -> u64 {
               AND state = 'waiting_external'
             "#,
         );
-        return sqlx::query(&sql)
+        return sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(queue)
             .execute(pool)
             .await

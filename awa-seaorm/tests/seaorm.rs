@@ -35,9 +35,9 @@ async fn setup_database() -> (sqlx::PgPool, DatabaseConnection) {
 
 async fn create_app_table(pool: &sqlx::PgPool, table_name: &str) {
     let table_name = quoted_identifier(table_name);
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE IF NOT EXISTS {table_name} (id TEXT PRIMARY KEY, note TEXT NOT NULL)"
-    ))
+    )))
     .execute(pool)
     .await
     .expect("create app table");
@@ -45,7 +45,7 @@ async fn create_app_table(pool: &sqlx::PgPool, table_name: &str) {
 
 async fn drop_app_table(pool: &sqlx::PgPool, table_name: &str) {
     let table_name = quoted_identifier(table_name);
-    sqlx::query(&format!("DROP TABLE IF EXISTS {table_name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table_name}")))
         .execute(pool)
         .await
         .expect("drop app table");
@@ -125,9 +125,9 @@ async fn enqueue_commits_atomically_with_app_writes() {
 
     txn.commit().await.expect("commit transaction");
 
-    let app_count: i64 = sqlx::query_scalar(&format!(
+    let app_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM {table_name} WHERE id = 'commit-app-row'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count committed app row");
@@ -170,9 +170,9 @@ async fn enqueue_rolls_back_with_app_writes() {
 
     txn.rollback().await.expect("rollback transaction");
 
-    let app_count: i64 = sqlx::query_scalar(&format!(
+    let app_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM {table_name} WHERE id = 'rollback-app-row'"
-    ))
+    )))
     .fetch_one(&pool)
     .await
     .expect("count rolled-back app row");

@@ -71,7 +71,7 @@ async fn prepare_schema_does_not_create_state_hb_index() {
     })
     .expect("construct QueueStorage");
 
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA IF EXISTS {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("clean any prior schema");
@@ -86,7 +86,7 @@ async fn prepare_schema_does_not_create_state_hb_index() {
         "fresh prepare_schema must not create idx_*_state_hb"
     );
 
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&pool)
         .await
         .expect("cleanup test schema");

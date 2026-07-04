@@ -645,7 +645,7 @@ impl PyClient {
                         .await
                         .map_err(map_awa_error)?;
                     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-                    sqlx::query(&drop_sql)
+                    sqlx::query(sqlx::AssertSqlSafe(drop_sql))
                         .execute(&pool)
                         .await
                         .map_err(map_sqlx_error)?;
@@ -2563,7 +2563,7 @@ impl PyClient {
                         .await
                         .map_err(map_awa_error)?;
                     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-                    sqlx::query(&drop_sql)
+                    sqlx::query(sqlx::AssertSqlSafe(drop_sql))
                         .execute(&pool)
                         .await
                         .map_err(map_sqlx_error)?;

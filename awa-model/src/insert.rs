@@ -394,7 +394,7 @@ where
     let rows = precompute_rows(jobs)?;
     let query = build_multi_insert_query(rows.len());
 
-    let mut sql_query = sqlx::query_as::<_, JobRow>(&query);
+    let mut sql_query = sqlx::query_as::<_, JobRow>(sqlx::AssertSqlSafe(query));
 
     for row in &rows {
         sql_query = sql_query

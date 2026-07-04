@@ -1679,7 +1679,7 @@ impl MaintenanceService {
         let mut tx = self.pool.begin().await?;
         let promote_start = std::time::Instant::now();
         let sql = Self::promote_sql(state);
-        let promoted_rows: Vec<(String,)> = sqlx::query_as(&sql)
+        let promoted_rows: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(PROMOTE_BATCH_SIZE)
             .fetch_all(&mut *tx)
             .await?;
@@ -2048,7 +2048,7 @@ impl MaintenanceService {
         let retention_secs = i64::try_from(self.dlq_retention.as_secs()).unwrap_or(i64::MAX);
 
         let global_result = if override_queues.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -2057,13 +2057,13 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .execute(&self.pool)
             .await
         } else {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -2073,7 +2073,7 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .bind(&override_queues)
@@ -2096,7 +2096,7 @@ impl MaintenanceService {
                 continue;
             };
             let retention_secs = i64::try_from(retention.as_secs()).unwrap_or(i64::MAX);
-            match sqlx::query(&format!(
+            match sqlx::query(sqlx::AssertSqlSafe(format!(
                 r#"
                 DELETE FROM {schema}.dlq_entries
                 WHERE job_id IN (
@@ -2106,7 +2106,7 @@ impl MaintenanceService {
                     LIMIT $2
                 )
                 "#
-            ))
+            )))
             .bind(retention_secs)
             .bind(self.dlq_cleanup_batch_size)
             .bind(queue)
@@ -2405,7 +2405,7 @@ impl MaintenanceService {
         // lane-head probes so long retained ready/done/receipt segments do
         // not compete with worker traffic. Admin surfaces that need exact
         // counts still go through QueueStorage::queue_counts().
-        let rows: Vec<QueueStorageMetricRow> = match sqlx::query_as(&format!(
+        let rows: Vec<QueueStorageMetricRow> = match sqlx::query_as(sqlx::AssertSqlSafe(format!(
             r#"
             WITH head_signal AS (
                 SELECT
@@ -2533,7 +2533,7 @@ impl MaintenanceService {
               ON dlq.queue = queues.queue
             ORDER BY queues.queue
             "#
-        ))
+        )))
         .fetch_all(&self.pool)
         .await
         {
@@ -2722,7 +2722,7 @@ mod tests {
             .await
             .expect("Failed to connect to admin database for maintenance tests");
         let create_sql = format!("CREATE DATABASE {database_name}");
-        match sqlx::query(&create_sql).execute(&admin_pool).await {
+        match sqlx::query(sqlx::AssertSqlSafe(create_sql)).execute(&admin_pool).await {
             Ok(_) => {}
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
             Err(err) => panic!("Failed to create maintenance test database {database_name}: {err}"),

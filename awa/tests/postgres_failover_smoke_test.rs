@@ -346,7 +346,7 @@ async fn queue_state_counts(pool: &sqlx::PgPool, queue: &str) -> HashMap<String,
              ) AS counts \
              GROUP BY state"
         );
-        let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(queue)
             .fetch_all(pool)
             .await
@@ -463,7 +463,7 @@ async fn storage_debug(pool: &sqlx::PgPool, queue: &str) -> String {
                   ) AS rollups \
                   USING (queue, priority))"
         );
-        sqlx::query_scalar::<_, i64>(&sql)
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .bind(queue)
             .fetch_one(pool)
             .await

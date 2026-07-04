@@ -85,7 +85,7 @@ async fn ensure_database_exists(url: &str) {
         .await
         .expect("Failed to connect to admin database for queue_storage benchmarks");
     let create_sql = format!("CREATE DATABASE {database_name}");
-    match sqlx::query(&create_sql).execute(&admin_pool).await {
+    match sqlx::query(sqlx::AssertSqlSafe(create_sql)).execute(&admin_pool).await {
         Ok(_) => {}
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => {}
         Err(err) => {
@@ -260,7 +260,7 @@ async fn capture_db_profile_delta(
 
 async fn recreate_store_schema(pool: &sqlx::PgPool, store: &QueueStorage) {
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-    sqlx::query(&drop_sql)
+    sqlx::query(sqlx::AssertSqlSafe(drop_sql))
         .execute(pool)
         .await
         .expect("Failed to drop experimental queue storage schema");
@@ -654,7 +654,7 @@ async fn overlap_reader(
             "history_snapshot" => {
                 let query =
                     format!("SELECT count(*)::bigint FROM {schema}.ready_entries WHERE queue = $1");
-                let _: i64 = sqlx::query_scalar(&query)
+                let _: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
                     .bind(&queue)
                     .fetch_one(conn.as_mut())
                     .await
@@ -679,7 +679,7 @@ async fn overlap_reader(
                      SELECT available.current_available + pruned.terminal_rollup \
                      FROM available CROSS JOIN pruned"
                 );
-                let _: i64 = sqlx::query_scalar(&query)
+                let _: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
                     .bind(&queue)
                     .fetch_one(conn.as_mut())
                     .await
@@ -1252,7 +1252,7 @@ async fn test_queue_storage_deep_backlog_drain_benchmark() {
     let seed_rate = inserted as f64 / seed_elapsed.as_secs_f64().max(0.001);
 
     if analyze_ready {
-        sqlx::query(&format!("ANALYZE {}.ready_entries", store.schema()))
+        sqlx::query(sqlx::AssertSqlSafe(format!("ANALYZE {}.ready_entries", store.schema())))
             .execute(&pool)
             .await
             .expect("Failed to analyze ready_entries after deep-backlog seed");

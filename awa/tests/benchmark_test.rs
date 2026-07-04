@@ -51,7 +51,7 @@ async fn ensure_pgstattuple(pool: &sqlx::PgPool) {
 
 async fn recreate_queue_storage_schema(pool: &sqlx::PgPool, store: &QueueStorage) {
     let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", store.schema());
-    sqlx::query(&drop_sql)
+    sqlx::query(sqlx::AssertSqlSafe(drop_sql))
         .execute(pool)
         .await
         .expect("Failed to drop queue storage benchmark schema");
