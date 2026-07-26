@@ -32,9 +32,9 @@ awa-worker = { path = "awa-worker", version = "0.6.0" }
 awa = { path = "awa", version = "0.6.0" }
 
 # Database
-sea-orm = { version = "=2.0.0-rc.41", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "with-chrono", "with-json"] }
+sea-orm = { version = "2.0", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "with-chrono", "with-json"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "chrono", "json", "migrate", "uuid"] }
-sea-schema = "=0.18.0"
+sea-schema = "0.18"
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
